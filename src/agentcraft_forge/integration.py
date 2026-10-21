@@ -1,15 +1,22 @@
 """Descubrimiento para asistentes y evidencia local, sin ejecutar el proyecto."""
 
 import hashlib
-import json
+import re
 import sys
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 
 from agentcraft_forge import __version__
+from agentcraft_forge.domains.common import fields, parse_json, safe_path
 from agentcraft_forge.generator import render
 from agentcraft_forge.planner import design
-from agentcraft_forge.project import fingerprint, read_spec, validate
+from agentcraft_forge.project import (
+    MAX_SOURCE_BYTES,
+    read_build_report,
+    read_spec,
+    source_files,
+    validate,
+)
 from agentcraft_forge.schema import Kind
 
 
@@ -72,47 +79,88 @@ def inspect_project(root: Path) -> dict:
     if path.is_file():
         if path.is_symlink() or path.stat().st_size > 100_000:
             raise ValueError("Evidencia enlazada o demasiado grande.")
-        evidence = json.loads(path.read_text(encoding="utf-8"))
+        evidence = fields(
+            parse_json(path.read_text(encoding="utf-8-sig")),
+            {
+                "schema_version",
+                "generator",
+                "generator_version",
+                "template_version",
+                "spec_sha256",
+                "original_files",
+                "limitations",
+            },
+        )
         spec_hash = hashlib.sha256(spec.model_dump_json().encode()).hexdigest()
         original = evidence["original_files"]
-        if not isinstance(original, dict) or len(original) > 200:
+        if (
+            type(evidence["schema_version"]) is not int
+            or evidence["schema_version"] != 1
+            or evidence["generator"] != "agentcraft-forge"
+            or evidence["generator_version"] != spec.generator_version
+            or evidence["template_version"] != spec.template_version
+            or not isinstance(evidence["spec_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", evidence["spec_sha256"])
+            or not isinstance(evidence["limitations"], str)
+            or not isinstance(original, dict)
+            or not 1 <= len(original) <= 200
+            or not {"agentcraft.json", "pyproject.toml", "src/agent_app/runner.py"}
+            <= original.keys()
+        ):
             raise ValueError("Inventario de origen no válido.")
         changes = []
         for relative, expected_hash in original.items():
             parts = PurePosixPath(relative)
-            if parts.is_absolute() or ".." in parts.parts or "\\" in relative:
+            if (
+                parts.is_absolute()
+                or ".." in parts.parts
+                or "\\" in relative
+                or ":" in relative
+                or not parts.parts
+                or parts.as_posix() != relative
+                or not isinstance(expected_hash, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+            ):
                 raise ValueError("Ruta no válida en la evidencia.")
-            candidate = root.joinpath(*parts.parts)
-            if candidate.is_symlink() or not candidate.resolve().is_relative_to(root):
-                raise ValueError("Archivo enlazado en la evidencia.")
+            candidate = safe_path(root, relative)
             if (
                 not candidate.is_file()
+                or candidate.stat().st_size > MAX_SOURCE_BYTES
                 or hashlib.sha256(candidate.read_bytes()).hexdigest() != expected_hash
             ):
                 changes.append(relative)
+        additions = [
+            path.relative_to(root).as_posix()
+            for path in source_files(root)
+            if path.suffix == ".py"
+            and path.relative_to(root).as_posix() not in original
+        ]
         origin = {
             "status": (
                 "matches_recorded_origin"
-                if not changes and evidence["spec_sha256"] == spec_hash
+                if not changes
+                and not additions
+                and evidence["spec_sha256"] == spec_hash
                 else "modified"
             ),
             "generator": evidence["generator"],
             "generator_version": evidence["generator_version"],
             "changed_original_files": changes,
+            "added_source_files": additions,
             "spec_matches": evidence["spec_sha256"] == spec_hash,
             "signed": False,
         }
-    state = root / ".agentcraft/build.json"
-    fresh = False
-    if (
-        state.is_file()
-        and not state.is_symlink()
-        and not state.parent.is_symlink()
-        and state.stat().st_size < 100_000
-    ):
-        fresh = json.loads(state.read_text(encoding="utf-8")).get(
-            "fingerprint"
-        ) == fingerprint(root)
+    try:
+        report = read_build_report(root)
+        build_status = "missing"
+        if report is not None:
+            fresh = all(
+                report[key] == validation[key]
+                for key in ("fingerprint", "kind", "python_files")
+            )
+            build_status = "fresh" if fresh else "stale"
+    except (ValueError, OSError):
+        build_status = "invalid"
     return {
         "status": "ok",
         "project": str(root),
@@ -120,7 +168,8 @@ def inspect_project(root: Path) -> dict:
         "origin": origin,
         "syntax_valid": True,
         "python_files": validation["python_files"],
-        "build_fresh": fresh,
+        "build_fresh": build_status == "fresh",
+        "build_status": build_status,
         "behavioral_tests": "not_run_by_inspect",
         "model_evaluation": "not_run_by_inspect",
     }

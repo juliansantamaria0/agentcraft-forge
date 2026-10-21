@@ -202,7 +202,7 @@ def inspect_command(
     """Muestra origen registrado, modificaciones y build; no ejecuta pruebas."""
     try:
         typer.echo(json.dumps(inspect_project(project), ensure_ascii=False, indent=2))
-    except (ValueError, OSError, KeyError) as exc:
+    except (ValueError, OSError, KeyError, SyntaxError) as exc:
         typer.echo(json.dumps({"status": "error", "code": type(exc).__name__}))
         raise typer.Exit(1) from None
 

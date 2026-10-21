@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.1
+# Operación por chat y comprobantes — 0.2.2
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -47,6 +47,20 @@ el directorio actual. El manifiesto registra requisitos, tipo, versión y capaci
 La evidencia conserva hashes originales; inspect muestra cambios y frescura del build.
 Ni una huella ni sintaxis válida prueban autoría externa, seguridad o comportamiento.
 Los proyectos de plantilla v1 pueden seguir validándose sin inventar un archivo de origen.
+
+Desde 0.2.2, `build_status` distingue `missing` (sin comprobante), `invalid` (estado
+dañado o no legible), `stale` (no coincide con el proyecto) y `fresh` (coincide con
+la validación actual). `build_fresh` sigue disponible como booleano. Un estado inválido
+no impide inspeccionar el código válido, pero bloquea run/invoke hasta reconstruir.
+Una evidencia de origen mal formada produce un error estructurado y no se reescribe.
+`origin.added_source_files` enumera Python nuevo dentro de src/tests y cambia el
+estado de origen a modified, aunque los archivos originales no se hayan tocado.
+
+Cada nuevo build retira primero su comprobante anterior y guarda el nuevo por reemplazo
+atómico solo después de completar el proceso. Si la instalación falla o el código cambia
+durante ella, repita build --install antes de ejecutar. Una validación sin --install
+no comprueba ni repara dependencias. Run revalida archivos requeridos y sintaxis;
+no importa módulos como parte de esa validación. El estado local no es una firma.
 
 ## Gastos: interpretación y escritura
 

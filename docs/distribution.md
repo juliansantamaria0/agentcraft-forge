@@ -10,7 +10,7 @@ nombre ni garantiza su disponibilidad futura o los derechos sobre una marca.
 
 El entregable incluye fuente y wheel funcional, y el repositorio público
 `juliansantamaria0/agentcraft-forge`. Los ejemplos con OWNER explican cómo publicar
-una copia propia. Los comandos con `v0.2.1` requieren crear antes ese tag; para la
+una copia propia. Los comandos con `v0.2.2` requieren crear antes ese tag; para la
 versión actual puede instalarse desde `main`, con Git instalado.
 El comando PyPI solo funciona
 después de una publicación real. No se presenta una URL planeada como un paquete ya
@@ -71,7 +71,7 @@ python -m pip install uv==0.13.4
 uv sync --locked --all-extras --group dev
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
 agentcraft --version
 ```
 
@@ -83,13 +83,13 @@ usar `--force` como solución general a conflictos entre herramientas.
 ## Desde GitHub y PyPI, después de publicar
 
 ```console
-pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 Con el extra del diseñador de IA:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 La referencia fija un tag; para máxima precisión puede usarse un commit verificado.
@@ -97,13 +97,13 @@ Un repositorio privado requiere credenciales de Git del usuario. No incluya toke
 en la URL del comando. Una vez disponible en PyPI:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai]==0.2.1"
+pipx install --python 3.12 "agentcraft-forge[ai]==0.2.2"
 ```
 
 También es posible instalar en un venv administrado por el desarrollador:
 
 ```console
-python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 pipx ofrece el comando global en su directorio de ejecutables y aísla dependencias.
@@ -191,9 +191,9 @@ uv run --locked pytest
 uv build --no-sources
 uv run --locked twine check dist/*
 git add src/agentcraft_forge/__init__.py CHANGELOG.md uv.lock
-git commit -m "chore: release 0.2.1"
+git commit -m "chore: release 0.2.2"
 git push origin main
-gh workflow run publish.yml --ref main -f version=0.2.1
+gh workflow run publish.yml --ref main -f version=0.2.2
 gh run list --workflow publish.yml
 ```
 

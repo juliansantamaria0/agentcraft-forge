@@ -1,6 +1,6 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
-**Guía técnica y código completo · Versión 0.2.1 · 21 de octubre de 2026**
+**Guía técnica y código completo · Versión 0.2.2 · 21 de octubre de 2026**
 
 El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
 
@@ -10,7 +10,7 @@ El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructu
 
 ## Uso desde el chat, gastos y compromisos en 0.2
 
-### Operación por chat y comprobantes — 0.2.1
+### Operación por chat y comprobantes — 0.2.2
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -59,6 +59,20 @@ el directorio actual. El manifiesto registra requisitos, tipo, versión y capaci
 La evidencia conserva hashes originales; inspect muestra cambios y frescura del build.
 Ni una huella ni sintaxis válida prueban autoría externa, seguridad o comportamiento.
 Los proyectos de plantilla v1 pueden seguir validándose sin inventar un archivo de origen.
+
+Desde 0.2.2, `build_status` distingue `missing` (sin comprobante), `invalid` (estado
+dañado o no legible), `stale` (no coincide con el proyecto) y `fresh` (coincide con
+la validación actual). `build_fresh` sigue disponible como booleano. Un estado inválido
+no impide inspeccionar el código válido, pero bloquea run/invoke hasta reconstruir.
+Una evidencia de origen mal formada produce un error estructurado y no se reescribe.
+`origin.added_source_files` enumera Python nuevo dentro de src/tests y cambia el
+estado de origen a modified, aunque los archivos originales no se hayan tocado.
+
+Cada nuevo build retira primero su comprobante anterior y guarda el nuevo por reemplazo
+atómico solo después de completar el proceso. Si la instalación falla o el código cambia
+durante ella, repita build --install antes de ejecutar. Una validación sin --install
+no comprueba ni repara dependencias. Run revalida archivos requeridos y sintaxis;
+no importa módulos como parte de esa validación. El estado local no es una firma.
 
 #### Gastos: interpretación y escritura
 
@@ -902,7 +916,7 @@ def inspect_command(
     """Muestra origen registrado, modificaciones y build; no ejecuta pruebas."""
     try:
         typer.echo(json.dumps(inspect_project(project), ensure_ascii=False, indent=2))
-    except (ValueError, OSError, KeyError) as exc:
+    except (ValueError, OSError, KeyError, SyntaxError) as exc:
         typer.echo(json.dumps({"status": "error", "code": type(exc).__name__}))
         raise typer.Exit(1) from None
 
@@ -1122,15 +1136,16 @@ def generate(spec: AgentSpec, parent: Path) -> Path:
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
 import venv
 from pathlib import Path
 
-from agentcraft_forge.domains.common import parse_json
+from agentcraft_forge.domains.common import atomic_text, fields, parse_json, safe_path
 from agentcraft_forge.generator import render
-from agentcraft_forge.schema import AgentSpec
+from agentcraft_forge.schema import AgentSpec, Kind
 
 MAX_SOURCE_BYTES = 1_000_000
 
@@ -1141,7 +1156,7 @@ def read_spec(root: Path) -> AgentSpec:
         raise ValueError("Falta agentcraft.json o es un enlace simbólico.")
     if path.stat().st_size > 100_000:
         raise ValueError("El manifiesto supera el tamaño permitido.")
-    return AgentSpec.model_validate_json(path.read_text(encoding="utf-8"))
+    return AgentSpec.model_validate(parse_json(path.read_text(encoding="utf-8-sig")))
 
 
 def source_files(root: Path) -> list[Path]:
@@ -1185,13 +1200,17 @@ def validate(root: Path) -> dict:
         path = root / relative
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"Archivo requerido ausente o enlazado: {relative}")
+    sources = source_files(root)
     metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    if metadata["project"]["name"] != spec.name:
+    package = metadata.get("project")
+    if not isinstance(package, dict):
+        raise ValueError("Falta una tabla [project] válida en pyproject.toml.")
+    if package.get("name") != spec.name:
         raise ValueError("El nombre de distribución no coincide con agentcraft.json.")
-    if metadata["project"]["scripts"] != {"agent": "agent_app.runner:main"}:
+    if package.get("scripts") != {"agent": "agent_app.runner:main"}:
         raise ValueError("El entry point del proyecto no coincide con la plantilla.")
     count = 0
-    for path in source_files(root):
+    for path in sources:
         if path.suffix == ".py":
             compile(path.read_text(encoding="utf-8"), str(path), "exec")
             count += 1
@@ -1206,10 +1225,12 @@ def validate(root: Path) -> dict:
 
 def build(root: Path, install: bool = False) -> dict:
     root = root.resolve(strict=True)
-    report = validate(root)
-    state_dir = root / ".agentcraft"
-    if state_dir.is_symlink() or (root / ".venv").is_symlink():
+    state_file = safe_path(root, ".agentcraft/build.json")
+    if (root / ".venv").is_symlink():
         raise ValueError("Los directorios de estado y entorno no pueden ser enlaces.")
+    # Un intento fallido nunca debe dejar vigente un comprobante anterior.
+    state_file.unlink(missing_ok=True)
+    report = validate(root)
     if install:
         # Una instalación ejecuta el backend de empaquetado: solo proyectos fiables.
         if not interpreter(root).is_file():
@@ -1233,11 +1254,48 @@ def build(root: Path, install: bool = False) -> dict:
             stdout=sys.stderr,
         )
         report["installed"] = True
-    state_dir.mkdir(exist_ok=True)
-    (state_dir / "build.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
-    )
+    if validate(root)["fingerprint"] != report["fingerprint"]:
+        raise ValueError(
+            "El proyecto cambió durante build; revise y vuelva a compilar."
+        )
+    atomic_text(state_file, json.dumps(report, indent=2))
     return report
+
+
+def read_build_report(root: Path) -> dict | None:
+    """Lee el comprobante limitado y tipado; None significa que no existe."""
+    try:
+        path = safe_path(root, ".agentcraft/build.json")
+        if not path.exists():
+            return None
+        if not path.is_file() or path.stat().st_size > 100_000:
+            raise ValueError("Tamaño o tipo no admitido.")
+        report = fields(
+            parse_json(path.read_text(encoding="utf-8-sig")),
+            {
+                "schema_version",
+                "kind",
+                "python_files",
+                "fingerprint",
+                "installed",
+            },
+        )
+        if (
+            type(report["schema_version"]) is not int
+            or report["schema_version"] != 1
+            or report["kind"] not in [kind.value for kind in Kind]
+            or type(report["python_files"]) is not int
+            or not 1 <= report["python_files"] <= 200
+            or type(report["installed"]) is not bool
+            or not isinstance(report["fingerprint"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", report["fingerprint"])
+        ):
+            raise ValueError("Campos no válidos.")
+        return report
+    except ValueError as exc:
+        raise ValueError(
+            "Comprobante de build inválido; ejecute agentcraft build de nuevo."
+        ) from exc
 
 
 def ensure_built(root: Path) -> AgentSpec:
@@ -1245,11 +1303,13 @@ def ensure_built(root: Path) -> AgentSpec:
     spec = read_spec(root)
     if (root / ".agentcraft").is_symlink() or (root / ".venv").is_symlink():
         raise ValueError("Estado o entorno enlazados fuera del control del proyecto.")
-    report_file = root / ".agentcraft" / "build.json"
-    if not report_file.is_file() or report_file.is_symlink():
+    report = read_build_report(root)
+    if report is None:
         raise ValueError("Ejecute agentcraft build antes de run.")
-    report = json.loads(report_file.read_text(encoding="utf-8"))
-    if report.get("fingerprint") != fingerprint(root):
+    current = validate(root)
+    if any(
+        report[key] != current[key] for key in ("kind", "fingerprint", "python_files")
+    ):
         raise ValueError("El proyecto cambió: vuelva a ejecutar agentcraft build.")
     return spec
 
@@ -1307,15 +1367,22 @@ def run_request(root: Path, request: Path) -> int:
 """Descubrimiento para asistentes y evidencia local, sin ejecutar el proyecto."""
 
 import hashlib
-import json
+import re
 import sys
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 
 from agentcraft_forge import __version__
+from agentcraft_forge.domains.common import fields, parse_json, safe_path
 from agentcraft_forge.generator import render
 from agentcraft_forge.planner import design
-from agentcraft_forge.project import fingerprint, read_spec, validate
+from agentcraft_forge.project import (
+    MAX_SOURCE_BYTES,
+    read_build_report,
+    read_spec,
+    source_files,
+    validate,
+)
 from agentcraft_forge.schema import Kind
 
 
@@ -1378,47 +1445,88 @@ def inspect_project(root: Path) -> dict:
     if path.is_file():
         if path.is_symlink() or path.stat().st_size > 100_000:
             raise ValueError("Evidencia enlazada o demasiado grande.")
-        evidence = json.loads(path.read_text(encoding="utf-8"))
+        evidence = fields(
+            parse_json(path.read_text(encoding="utf-8-sig")),
+            {
+                "schema_version",
+                "generator",
+                "generator_version",
+                "template_version",
+                "spec_sha256",
+                "original_files",
+                "limitations",
+            },
+        )
         spec_hash = hashlib.sha256(spec.model_dump_json().encode()).hexdigest()
         original = evidence["original_files"]
-        if not isinstance(original, dict) or len(original) > 200:
+        if (
+            type(evidence["schema_version"]) is not int
+            or evidence["schema_version"] != 1
+            or evidence["generator"] != "agentcraft-forge"
+            or evidence["generator_version"] != spec.generator_version
+            or evidence["template_version"] != spec.template_version
+            or not isinstance(evidence["spec_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", evidence["spec_sha256"])
+            or not isinstance(evidence["limitations"], str)
+            or not isinstance(original, dict)
+            or not 1 <= len(original) <= 200
+            or not {"agentcraft.json", "pyproject.toml", "src/agent_app/runner.py"}
+            <= original.keys()
+        ):
             raise ValueError("Inventario de origen no válido.")
         changes = []
         for relative, expected_hash in original.items():
             parts = PurePosixPath(relative)
-            if parts.is_absolute() or ".." in parts.parts or "\\" in relative:
+            if (
+                parts.is_absolute()
+                or ".." in parts.parts
+                or "\\" in relative
+                or ":" in relative
+                or not parts.parts
+                or parts.as_posix() != relative
+                or not isinstance(expected_hash, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+            ):
                 raise ValueError("Ruta no válida en la evidencia.")
-            candidate = root.joinpath(*parts.parts)
-            if candidate.is_symlink() or not candidate.resolve().is_relative_to(root):
-                raise ValueError("Archivo enlazado en la evidencia.")
+            candidate = safe_path(root, relative)
             if (
                 not candidate.is_file()
+                or candidate.stat().st_size > MAX_SOURCE_BYTES
                 or hashlib.sha256(candidate.read_bytes()).hexdigest() != expected_hash
             ):
                 changes.append(relative)
+        additions = [
+            path.relative_to(root).as_posix()
+            for path in source_files(root)
+            if path.suffix == ".py"
+            and path.relative_to(root).as_posix() not in original
+        ]
         origin = {
             "status": (
                 "matches_recorded_origin"
-                if not changes and evidence["spec_sha256"] == spec_hash
+                if not changes
+                and not additions
+                and evidence["spec_sha256"] == spec_hash
                 else "modified"
             ),
             "generator": evidence["generator"],
             "generator_version": evidence["generator_version"],
             "changed_original_files": changes,
+            "added_source_files": additions,
             "spec_matches": evidence["spec_sha256"] == spec_hash,
             "signed": False,
         }
-    state = root / ".agentcraft/build.json"
-    fresh = False
-    if (
-        state.is_file()
-        and not state.is_symlink()
-        and not state.parent.is_symlink()
-        and state.stat().st_size < 100_000
-    ):
-        fresh = json.loads(state.read_text(encoding="utf-8")).get(
-            "fingerprint"
-        ) == fingerprint(root)
+    try:
+        report = read_build_report(root)
+        build_status = "missing"
+        if report is not None:
+            fresh = all(
+                report[key] == validation[key]
+                for key in ("fingerprint", "kind", "python_files")
+            )
+            build_status = "fresh" if fresh else "stale"
+    except (ValueError, OSError):
+        build_status = "invalid"
     return {
         "status": "ok",
         "project": str(root),
@@ -1426,7 +1534,8 @@ def inspect_project(root: Path) -> dict:
         "origin": origin,
         "syntax_valid": True,
         "python_files": validation["python_files"],
-        "build_fresh": fresh,
+        "build_fresh": build_status == "fresh",
+        "build_status": build_status,
         "behavioral_tests": "not_run_by_inspect",
         "model_evaluation": "not_run_by_inspect",
     }
@@ -1447,7 +1556,7 @@ app()
 ````python
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 ````
 
 
@@ -4210,7 +4319,7 @@ nombre ni garantiza su disponibilidad futura o los derechos sobre una marca.
 
 El entregable incluye fuente y wheel funcional, y el repositorio público
 `juliansantamaria0/agentcraft-forge`. Los ejemplos con OWNER explican cómo publicar
-una copia propia. Los comandos con `v0.2.1` requieren crear antes ese tag; para la
+una copia propia. Los comandos con `v0.2.2` requieren crear antes ese tag; para la
 versión actual puede instalarse desde `main`, con Git instalado.
 El comando PyPI solo funciona
 después de una publicación real. No se presenta una URL planeada como un paquete ya
@@ -4271,7 +4380,7 @@ python -m pip install uv==0.13.4
 uv sync --locked --all-extras --group dev
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
 agentcraft --version
 ```
 
@@ -4283,13 +4392,13 @@ usar `--force` como solución general a conflictos entre herramientas.
 #### Desde GitHub y PyPI, después de publicar
 
 ```console
-pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 Con el extra del diseñador de IA:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 La referencia fija un tag; para máxima precisión puede usarse un commit verificado.
@@ -4297,13 +4406,13 @@ Un repositorio privado requiere credenciales de Git del usuario. No incluya toke
 en la URL del comando. Una vez disponible en PyPI:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai]==0.2.1"
+pipx install --python 3.12 "agentcraft-forge[ai]==0.2.2"
 ```
 
 También es posible instalar en un venv administrado por el desarrollador:
 
 ```console
-python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
+python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
 ```
 
 pipx ofrece el comando global en su directorio de ejecutables y aísla dependencias.
@@ -4391,9 +4500,9 @@ uv run --locked pytest
 uv build --no-sources
 uv run --locked twine check dist/*
 git add src/agentcraft_forge/__init__.py CHANGELOG.md uv.lock
-git commit -m "chore: release 0.2.1"
+git commit -m "chore: release 0.2.2"
 git push origin main
-gh workflow run publish.yml --ref main -f version=0.2.1
+gh workflow run publish.yml --ref main -f version=0.2.2
 gh run list --workflow publish.yml
 ```
 
@@ -4534,7 +4643,7 @@ site/
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.1 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.2 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -4588,6 +4697,12 @@ Actualizar la CLI cambia las plantillas para los proyectos nuevos. Los agentes y
 generados conservan su código y sus datos: no se migran ni se sobrescriben al reinstalar.
 Para adoptar correcciones en un agente existente, genere una copia en otra carpeta,
 compare el código y ejecute sus pruebas antes de integrar los cambios.
+
+En 0.2.2, `inspect` indica `build_status`: `missing`, `invalid`, `stale` o `fresh`.
+Un build fallido deja de habilitar ejecuciones con su comprobante anterior. Después
+de una instalación interrumpida, repita `agentcraft build --project RUTA --install`.
+La inspección informa archivos Python añadidos en `src` y `tests`; sus huellas locales
+no sustituyen pruebas de comportamiento ni una firma de distribución.
 
 #### Usarlo desde el mismo chat
 
@@ -5087,16 +5202,16 @@ if __name__ == "__main__":
 
 ## 6. Pruebas y evidencia reproducible
 
-### Evidencia de validación — 0.2.1
+### Evidencia de validación — 0.2.2
 
 Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 122 pruebas correctas |
-| Cobertura de sentencias | 87 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
+| pytest, red bloqueada por fixture | 149 pruebas correctas |
+| Cobertura de sentencias | 89 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
-| Black | 21 archivos de fuente, scripts y pruebas formateados |
+| Black | 22 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
 | Instalación del wheel con pipx | Correcta en un PIPX_HOME temporal, sin cambiar el PATH global del usuario |
 | Smoke del wheel fuera del checkout | Cinco tipos pasan init, build, inspect y run --dry-run; adaptador y dos pruebas de dominio correctos |
@@ -5105,6 +5220,7 @@ Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 | Reintentos y conflictos | Misma operación no duplica; argumentos distintos con el mismo ID se rechazan |
 | Auditoría de dominio | Tres candidatos con fuentes, progreso reciente revisado, aplicación con backup y reintento sin duplicados |
 | Pruebas incluidas en los proyectos generados | unittest de expenses y audit correctos en sus propios venvs |
+| CLI nueva contra proyecto 0.2.1 | Inspect y propuesta correctos; hashes del código, manifiesto y base de datos sin cambios |
 
 La batería prueba validación, menú interactivo, cancelación, generación de las cinco
 arquitecturas, recursos instalados, no sobrescritura, tratamiento del propósito como
@@ -5126,6 +5242,15 @@ ambiguo sin crear SQLite y la continuidad del chat tras un mensaje inválido.
 Una prueba intercala el commit de otro escritor en modo WAL entre las consultas de
 un resumen y verifica que filas, recuento y categorías conserven el mismo snapshot.
 
+La versión 0.2.2 añade 27 casos de estado del proyecto: instalación fallida, escritura
+interrumpida, modificación durante build, archivos requeridos ausentes, JSON y tipos
+inválidos, destinos declarados como enlaces y recuperación mediante un nuevo build.
+Comprueba el rechazo de inventarios de origen mal formados y la detección de nuevas
+fuentes Python. Los fallos de instalación se inyectan sin ejecutar pip dentro de la suite;
+el camino de instalación real se comprueba por separado desde el paquete instalado.
+Inspect también conserva su respuesta JSON ante Python inválido o una tabla project
+de tipo incorrecto en pyproject.toml.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -5142,7 +5267,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
@@ -6317,6 +6442,220 @@ def test_windows_reserved_names_are_rejected_before_ai_call_on_every_platform(na
 ````
 
 
+### `tests/test_project_state.py`
+
+````python
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from agentcraft_forge.cli import app
+from agentcraft_forge.generator import generate
+from agentcraft_forge.integration import inspect_project
+from agentcraft_forge.planner import design
+from agentcraft_forge.project import build, ensure_built
+from agentcraft_forge.schema import Kind
+
+
+@pytest.fixture
+def project(tmp_path):
+    target = generate(
+        design("state-agent", "Registrar gastos personales", Kind.expenses), tmp_path
+    )
+    build(target)
+    return target
+
+
+def test_failed_install_invalidates_previous_build(project, monkeypatch):
+    from agentcraft_forge import project as operations
+
+    monkeypatch.setattr(operations.venv.EnvBuilder, "create", lambda *args: None)
+
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, ["pip", "install"])
+
+    monkeypatch.setattr(operations.subprocess, "run", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        build(project, install=True)
+    with pytest.raises(ValueError, match="build"):
+        ensure_built(project)
+    assert inspect_project(project)["build_fresh"] is False
+
+
+def test_failed_validation_also_invalidates_previous_build(project):
+    (project / "Dockerfile").unlink()
+    with pytest.raises(ValueError):
+        build(project)
+    with pytest.raises(ValueError):
+        ensure_built(project)
+
+
+def test_build_report_cannot_survive_source_changes_during_install(
+    project, monkeypatch
+):
+    from agentcraft_forge import project as operations
+
+    monkeypatch.setattr(operations.venv.EnvBuilder, "create", lambda *args: None)
+
+    def change_source(*args, **kwargs):
+        (project / "src/agent_app/extra.py").write_text(
+            "# changed during install\n", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(operations.subprocess, "run", change_source)
+    with pytest.raises(ValueError, match="cambió"):
+        build(project, install=True)
+    with pytest.raises(ValueError):
+        ensure_built(project)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[]",
+        "null",
+        '{"fingerprint":"bad"}',
+        '{"schema_version":1,"schema_version":2}',
+        "{",
+    ],
+)
+def test_corrupt_build_state_is_reported_without_traceback(project, content):
+    (project / ".agentcraft/build.json").write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(app, ["inspect", "--project", str(project)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["build_fresh"] is False
+    assert payload["build_status"] == "invalid"
+    with pytest.raises(ValueError, match="build"):
+        ensure_built(project)
+    build(project)
+    assert inspect_project(project)["build_status"] == "fresh"
+
+
+@pytest.mark.parametrize(
+    "content", ["[]", "null", '{"original_files":{}}', '{"original_files":42}']
+)
+def test_corrupt_provenance_is_a_controlled_json_error(project, content):
+    (project / "agentcraft.provenance.json").write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(app, ["inspect", "--project", str(project)])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["status"] == "error"
+    assert result.exception is not None
+    assert "Traceback" not in result.output
+
+
+def test_added_python_source_changes_origin_status(project):
+    (project / "src/agent_app/custom_tool.py").write_text(
+        "VALUE = 1\n", encoding="utf-8"
+    )
+    origin = inspect_project(project)["origin"]
+    assert origin["status"] == "modified"
+    assert origin["added_source_files"] == ["src/agent_app/custom_tool.py"]
+
+
+def test_ensure_built_rechecks_required_files(project):
+    (project / "Dockerfile").unlink()
+    with pytest.raises(ValueError, match="Dockerfile"):
+        ensure_built(project)
+
+
+def test_interrupted_build_report_write_has_no_valid_old_report(project, monkeypatch):
+    from agentcraft_forge import project as operations
+
+    def fail(*args):
+        raise OSError("Simulated full disk")
+
+    monkeypatch.setattr(operations, "atomic_text", fail)
+    with pytest.raises(OSError):
+        build(project)
+    with pytest.raises(ValueError, match="build"):
+        ensure_built(project)
+
+
+def test_build_rejects_linked_report_before_touching_it(project, monkeypatch):
+    state = project / ".agentcraft/build.json"
+    previous = state.read_bytes()
+    original = Path.is_symlink
+    monkeypatch.setattr(
+        Path, "is_symlink", lambda path: path == state or original(path)
+    )
+    with pytest.raises(ValueError, match="enlaces"):
+        build(project)
+    assert state.read_bytes() == previous
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("installed", "yes"), ("python_files", True), ("schema_version", True)],
+)
+def test_build_state_requires_exact_field_types(project, field, value):
+    state = project / ".agentcraft/build.json"
+    report = json.loads(state.read_text(encoding="utf-8"))
+    report[field] = value
+    state.write_text(json.dumps(report), encoding="utf-8")
+    assert inspect_project(project)["build_status"] == "invalid"
+    with pytest.raises(ValueError, match="build"):
+        ensure_built(project)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["empty_inventory", "invalid_hash", "unsafe_path", "boolean_schema"]
+)
+def test_provenance_checks_structure_hashes_and_paths(project, mutation):
+    path = project / "agentcraft.provenance.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "empty_inventory":
+        record["original_files"] = {}
+    elif mutation == "invalid_hash":
+        record["original_files"]["README.md"] = 123
+    elif mutation == "unsafe_path":
+        record["original_files"]["../outside"] = "0" * 64
+    else:
+        record["schema_version"] = True
+    path.write_text(json.dumps(record), encoding="utf-8")
+    result = CliRunner().invoke(app, ["inspect", "--project", str(project)])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["status"] == "error"
+
+
+def test_duplicate_manifest_fields_do_not_silently_override_requirements(project):
+    path = project / "agentcraft.json"
+    content = path.read_text(encoding="utf-8")
+    path.write_text(
+        '{"purpose":"Otra intención",' + content.lstrip()[1:], encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="repetidas"):
+        build(project)
+
+
+def test_build_record_inconsistent_with_sources_is_stale(project):
+    state = project / ".agentcraft/build.json"
+    report = json.loads(state.read_text(encoding="utf-8"))
+    report["python_files"] += 1
+    state.write_text(json.dumps(report), encoding="utf-8")
+    assert inspect_project(project)["build_status"] == "stale"
+    with pytest.raises(ValueError, match="cambió"):
+        ensure_built(project)
+
+
+def test_inspect_reports_invalid_python_as_json(project):
+    (project / "src/agent_app/broken.py").write_text("return 1\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["inspect", "--project", str(project)])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["code"] == "SyntaxError"
+
+
+def test_inspect_reports_invalid_project_table_as_json(project):
+    (project / "pyproject.toml").write_text("project = 42\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["inspect", "--project", str(project)])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["code"] == "ValueError"
+````
+
+
 ## 7. Seguridad, licencia y mantenimiento
 
 ### Seguridad
@@ -6351,6 +6690,21 @@ pruebe restauración y gestione locks residuales antes de usarlas como servicio.
 
 
 ### Changelog
+
+#### 0.2.2 — 2026-10-21
+
+- Un nuevo build invalida su comprobante anterior antes de validar o instalar. Si
+  falla o el código cambia durante la instalación, run exige un nuevo build correcto.
+- Comprobantes de build escritos mediante reemplazo atómico y leídos con límite de
+  tamaño, JSON estricto y validación de tipos. Se rechazan destinos enlazados.
+- Run vuelve a comprobar archivos requeridos y sintaxis, además de la huella del
+  proyecto. Inspect distingue build missing, invalid, stale y fresh.
+- Inspect detecta Python añadido dentro de src/tests y valida estructura, rutas y
+  hashes del inventario de origen; los registros dañados producen errores controlados.
+- Inspect conserva su salida JSON ante errores de sintaxis Python o configuración
+  TOML de proyecto incorrecta.
+- El manifiesto rechaza claves JSON repetidas. Regresiones de instalación fallida,
+  escritura interrumpida, metadatos dañados y cambios durante build.
 
 #### 0.2.1 — 2026-10-21
 

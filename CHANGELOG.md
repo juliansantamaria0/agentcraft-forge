@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2 — 2026-10-21
+
+- Un nuevo build invalida su comprobante anterior antes de validar o instalar. Si
+  falla o el código cambia durante la instalación, run exige un nuevo build correcto.
+- Comprobantes de build escritos mediante reemplazo atómico y leídos con límite de
+  tamaño, JSON estricto y validación de tipos. Se rechazan destinos enlazados.
+- Run vuelve a comprobar archivos requeridos y sintaxis, además de la huella del
+  proyecto. Inspect distingue build missing, invalid, stale y fresh.
+- Inspect detecta Python añadido dentro de src/tests y valida estructura, rutas y
+  hashes del inventario de origen; los registros dañados producen errores controlados.
+- Inspect conserva su salida JSON ante errores de sintaxis Python o configuración
+  TOML de proyecto incorrecta.
+- El manifiesto rechaza claves JSON repetidas. Regresiones de instalación fallida,
+  escritura interrumpida, metadatos dañados y cambios durante build.
+
 ## 0.2.1 — 2026-10-21
 
 - Resúmenes con fechas, meses explícitos y mes anterior sin sustituirlos por el mes

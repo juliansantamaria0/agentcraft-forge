@@ -3,15 +3,16 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
 import venv
 from pathlib import Path
 
-from agentcraft_forge.domains.common import parse_json
+from agentcraft_forge.domains.common import atomic_text, fields, parse_json, safe_path
 from agentcraft_forge.generator import render
-from agentcraft_forge.schema import AgentSpec
+from agentcraft_forge.schema import AgentSpec, Kind
 
 MAX_SOURCE_BYTES = 1_000_000
 
@@ -22,7 +23,7 @@ def read_spec(root: Path) -> AgentSpec:
         raise ValueError("Falta agentcraft.json o es un enlace simbólico.")
     if path.stat().st_size > 100_000:
         raise ValueError("El manifiesto supera el tamaño permitido.")
-    return AgentSpec.model_validate_json(path.read_text(encoding="utf-8"))
+    return AgentSpec.model_validate(parse_json(path.read_text(encoding="utf-8-sig")))
 
 
 def source_files(root: Path) -> list[Path]:
@@ -66,13 +67,17 @@ def validate(root: Path) -> dict:
         path = root / relative
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"Archivo requerido ausente o enlazado: {relative}")
+    sources = source_files(root)
     metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    if metadata["project"]["name"] != spec.name:
+    package = metadata.get("project")
+    if not isinstance(package, dict):
+        raise ValueError("Falta una tabla [project] válida en pyproject.toml.")
+    if package.get("name") != spec.name:
         raise ValueError("El nombre de distribución no coincide con agentcraft.json.")
-    if metadata["project"]["scripts"] != {"agent": "agent_app.runner:main"}:
+    if package.get("scripts") != {"agent": "agent_app.runner:main"}:
         raise ValueError("El entry point del proyecto no coincide con la plantilla.")
     count = 0
-    for path in source_files(root):
+    for path in sources:
         if path.suffix == ".py":
             compile(path.read_text(encoding="utf-8"), str(path), "exec")
             count += 1
@@ -87,10 +92,12 @@ def validate(root: Path) -> dict:
 
 def build(root: Path, install: bool = False) -> dict:
     root = root.resolve(strict=True)
-    report = validate(root)
-    state_dir = root / ".agentcraft"
-    if state_dir.is_symlink() or (root / ".venv").is_symlink():
+    state_file = safe_path(root, ".agentcraft/build.json")
+    if (root / ".venv").is_symlink():
         raise ValueError("Los directorios de estado y entorno no pueden ser enlaces.")
+    # Un intento fallido nunca debe dejar vigente un comprobante anterior.
+    state_file.unlink(missing_ok=True)
+    report = validate(root)
     if install:
         # Una instalación ejecuta el backend de empaquetado: solo proyectos fiables.
         if not interpreter(root).is_file():
@@ -114,11 +121,48 @@ def build(root: Path, install: bool = False) -> dict:
             stdout=sys.stderr,
         )
         report["installed"] = True
-    state_dir.mkdir(exist_ok=True)
-    (state_dir / "build.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
-    )
+    if validate(root)["fingerprint"] != report["fingerprint"]:
+        raise ValueError(
+            "El proyecto cambió durante build; revise y vuelva a compilar."
+        )
+    atomic_text(state_file, json.dumps(report, indent=2))
     return report
+
+
+def read_build_report(root: Path) -> dict | None:
+    """Lee el comprobante limitado y tipado; None significa que no existe."""
+    try:
+        path = safe_path(root, ".agentcraft/build.json")
+        if not path.exists():
+            return None
+        if not path.is_file() or path.stat().st_size > 100_000:
+            raise ValueError("Tamaño o tipo no admitido.")
+        report = fields(
+            parse_json(path.read_text(encoding="utf-8-sig")),
+            {
+                "schema_version",
+                "kind",
+                "python_files",
+                "fingerprint",
+                "installed",
+            },
+        )
+        if (
+            type(report["schema_version"]) is not int
+            or report["schema_version"] != 1
+            or report["kind"] not in [kind.value for kind in Kind]
+            or type(report["python_files"]) is not int
+            or not 1 <= report["python_files"] <= 200
+            or type(report["installed"]) is not bool
+            or not isinstance(report["fingerprint"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", report["fingerprint"])
+        ):
+            raise ValueError("Campos no válidos.")
+        return report
+    except ValueError as exc:
+        raise ValueError(
+            "Comprobante de build inválido; ejecute agentcraft build de nuevo."
+        ) from exc
 
 
 def ensure_built(root: Path) -> AgentSpec:
@@ -126,11 +170,13 @@ def ensure_built(root: Path) -> AgentSpec:
     spec = read_spec(root)
     if (root / ".agentcraft").is_symlink() or (root / ".venv").is_symlink():
         raise ValueError("Estado o entorno enlazados fuera del control del proyecto.")
-    report_file = root / ".agentcraft" / "build.json"
-    if not report_file.is_file() or report_file.is_symlink():
+    report = read_build_report(root)
+    if report is None:
         raise ValueError("Ejecute agentcraft build antes de run.")
-    report = json.loads(report_file.read_text(encoding="utf-8"))
-    if report.get("fingerprint") != fingerprint(root):
+    current = validate(root)
+    if any(
+        report[key] != current[key] for key in ("kind", "fingerprint", "python_files")
+    ):
         raise ValueError("El proyecto cambió: vuelva a ejecutar agentcraft build.")
     return spec
 
