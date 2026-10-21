@@ -8,7 +8,11 @@ from pathlib import Path
 
 
 def main(python: str) -> None:
-    executable = str(Path(python).resolve(strict=True))
+    # Conservar la ruta del venv: resolve() seguiría bin/python hasta el Python base.
+    executable_path = Path(python).absolute()
+    if not executable_path.is_file():
+        raise FileNotFoundError("No existe el intérprete del entorno de prueba.")
+    executable = str(executable_path)
     with tempfile.TemporaryDirectory(prefix="agentcraft-wheel-") as directory:
         root = Path(directory)
 
@@ -19,9 +23,11 @@ def main(python: str) -> None:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                check=True,
+                check=False,
                 timeout=60,
             )
+            if result.returncode:
+                raise RuntimeError(f"La CLI falló en {args!r}: {result.stderr[-2500:]}")
             return result.stdout
 
         if len(json.loads(invoke("doctor"))["templates"]) != 5:

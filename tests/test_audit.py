@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,17 @@ def fixture_workspace(root):
         encoding="utf-8",
     )
     return {"action": "scan", "owner": "Lucía", "reference_date": "2026-10-21"}
+
+
+def test_relative_workspace_is_normalized_before_audit(tmp_path, monkeypatch):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Me comprometí a llamar al proveedor mañana", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    report = handle(Path(tmp_path.name), request)
+    assert report["status"] == "review_required"
+    assert report["candidates"][0]["source"]["file"] == "journal/2026-10-20.md"
 
 
 def test_audit_tracks_evidence_dates_owner_and_recent_progress(tmp_path):

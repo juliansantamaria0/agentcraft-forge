@@ -2217,6 +2217,7 @@ def due_date(value: str, reference: date) -> str | None:
 
 
 def inventory(root: Path) -> dict[str, str]:
+    root = root.resolve(strict=True)
     result = {}
     canonical_file = safe_path(root, "open-loops.md")
     if canonical_file.is_file():
@@ -2618,6 +2619,8 @@ def apply(root: Path, request: dict) -> dict:
 def handle(root: Path, request: object) -> dict:
     if not isinstance(request, dict):
         raise DomainError("invalid_request", "Se requiere un objeto JSON.")
+    # Unificar rutas relativas y los alias cortos 8.3 que Windows usa en TEMP.
+    root = root.resolve(strict=True)
     if request.get("action") == "scan":
         return scan(root, request)
     if request.get("action") == "apply":
@@ -4599,6 +4602,7 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -4797,7 +4801,11 @@ from pathlib import Path
 
 
 def main(python: str) -> None:
-    executable = str(Path(python).resolve(strict=True))
+    # Conservar la ruta del venv: resolve() seguiría bin/python hasta el Python base.
+    executable_path = Path(python).absolute()
+    if not executable_path.is_file():
+        raise FileNotFoundError("No existe el intérprete del entorno de prueba.")
+    executable = str(executable_path)
     with tempfile.TemporaryDirectory(prefix="agentcraft-wheel-") as directory:
         root = Path(directory)
 
@@ -4808,9 +4816,11 @@ def main(python: str) -> None:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                check=True,
+                check=False,
                 timeout=60,
             )
+            if result.returncode:
+                raise RuntimeError(f"La CLI falló en {args!r}: {result.stderr[-2500:]}")
             return result.stdout
 
         if len(json.loads(invoke("doctor"))["templates"]) != 5:
@@ -4881,7 +4891,7 @@ Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 80 pruebas correctas |
+| pytest, red bloqueada por fixture | 81 pruebas correctas |
 | Cobertura de sentencias | 86 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 21 archivos de fuente, scripts y pruebas formateados |
@@ -4972,6 +4982,7 @@ def offline(monkeypatch):
 
 ````python
 import json
+from pathlib import Path
 
 import pytest
 
@@ -4987,6 +4998,17 @@ def fixture_workspace(root):
         encoding="utf-8",
     )
     return {"action": "scan", "owner": "Lucía", "reference_date": "2026-10-21"}
+
+
+def test_relative_workspace_is_normalized_before_audit(tmp_path, monkeypatch):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Me comprometí a llamar al proveedor mañana", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    report = handle(Path(tmp_path.name), request)
+    assert report["status"] == "review_required"
+    assert report["candidates"][0]["source"]["file"] == "journal/2026-10-20.md"
 
 
 def test_audit_tracks_evidence_dates_owner_and_recent_progress(tmp_path):

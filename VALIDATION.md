@@ -4,7 +4,7 @@ Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 80 pruebas correctas |
+| pytest, red bloqueada por fixture | 81 pruebas correctas |
 | Cobertura de sentencias | 86 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 21 archivos de fuente, scripts y pruebas formateados |

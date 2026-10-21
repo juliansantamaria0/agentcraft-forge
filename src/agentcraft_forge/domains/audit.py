@@ -128,6 +128,7 @@ def due_date(value: str, reference: date) -> str | None:
 
 
 def inventory(root: Path) -> dict[str, str]:
+    root = root.resolve(strict=True)
     result = {}
     canonical_file = safe_path(root, "open-loops.md")
     if canonical_file.is_file():
@@ -529,6 +530,8 @@ def apply(root: Path, request: dict) -> dict:
 def handle(root: Path, request: object) -> dict:
     if not isinstance(request, dict):
         raise DomainError("invalid_request", "Se requiere un objeto JSON.")
+    # Unificar rutas relativas y los alias cortos 8.3 que Windows usa en TEMP.
+    root = root.resolve(strict=True)
     if request.get("action") == "scan":
         return scan(root, request)
     if request.get("action") == "apply":
