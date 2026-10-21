@@ -14,7 +14,7 @@ def main(python: str) -> None:
 
         def invoke(*args):
             result = subprocess.run(  # noqa: S603 - Intérprete local validado, argumentos fijos, sin shell.
-                [executable, "-m", "agentcraft_forge", *args],
+                [executable, "-X", "utf8", "-m", "agentcraft_forge", *args],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -24,7 +24,12 @@ def main(python: str) -> None:
             )
             return result.stdout
 
-        for kind in ("rag", "tools", "multi"):
+        if len(json.loads(invoke("doctor"))["templates"]) != 5:
+            raise RuntimeError("Faltan plantillas en la instalación.")
+        invoke("install-skill", "--directory", str(root / "skills"))
+        if not (root / "skills/agentcraft/SKILL.md").is_file():
+            raise RuntimeError("Falta el adaptador de chat.")
+        for kind in ("rag", "tools", "multi", "expenses", "audit"):
             invoke(
                 "init",
                 "--name",
@@ -34,13 +39,44 @@ def main(python: str) -> None:
                 "--kind",
                 kind,
                 "--yes",
+                "--json",
             )
             target = root / f"smoke-{kind}"
             invoke("build", "--project", str(target))
             output = invoke("run", "--project", str(target), "--dry-run")
             if json.loads(output)["model_invoked"] is not False:
                 raise RuntimeError("El smoke test no debe usar modelos.")
-    print("Wheel instalado: tres plantillas, build y run offline correctos.")
+            if (
+                json.loads(invoke("inspect", "--project", str(target)))["origin"][
+                    "status"
+                ]
+                != "matches_recorded_origin"
+            ):
+                raise RuntimeError("La evidencia no coincide con el proyecto generado.")
+            if kind in {"expenses", "audit"}:
+                result = subprocess.run(  # noqa: S603 - Código de prueba generado localmente desde recursos del wheel.
+                    [
+                        executable,
+                        "-X",
+                        "utf8",
+                        "-I",
+                        "-c",
+                        "import sys,unittest;sys.path.insert(0,sys.argv[1]);suite=unittest.defaultTestLoader.discover(sys.argv[2],pattern='test_domain.py');r=unittest.TextTestRunner().run(suite);raise SystemExit(not r.wasSuccessful())",
+                        str(target / "src"),
+                        str(target / "tests"),
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=60,
+                    check=False,
+                )
+                if result.returncode:
+                    raise RuntimeError(result.stderr)
+    print(
+        "Wheel instalado: cinco plantillas, adaptador, origen y pruebas de dominio correctos."
+    )
 
 
 if __name__ == "__main__":

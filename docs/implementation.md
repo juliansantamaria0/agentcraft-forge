@@ -1,5 +1,11 @@
 # 2. Implementación de la CLI y los boilerplates
 
+0.2 agrega init --json, doctor, inspect, install-skill e invoke, y los motores
+expenses/audit sin proveedor LLM. Las implementaciones de dominio se mantienen en
+`src/agentcraft_forge/domains` y se copian al namespace del proyecto generado para
+conservar independencia del entorno global. Las pruebas también ejecutan esas copias
+desde procesos separados. Vea [el contrato y ejemplos JSON](chat-workflow.md).
+
 ## Paquetes y módulos
 
 La distribución es `agentcraft-forge`, el módulo Python es `agentcraft_forge` y el

@@ -1,4 +1,4 @@
-recursive-include src/agentcraft_forge/templates *.j2 *.tmpl
+recursive-include src/agentcraft_forge/templates *.j2 *.tmpl *.md
 include README.md LICENSE
 include uv.lock CHANGELOG.md SECURITY.md
 include VALIDATION.md

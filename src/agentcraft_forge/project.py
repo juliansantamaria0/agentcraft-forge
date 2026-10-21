@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tomllib
 import venv
 from pathlib import Path
@@ -25,6 +26,12 @@ def read_spec(root: Path) -> AgentSpec:
 
 def source_files(root: Path) -> list[Path]:
     candidates = [root / "agentcraft.json", root / "pyproject.toml"]
+    for relative in (
+        "agentcraft.provenance.json",
+        ".agents/skills/agentcraft-project/SKILL.md",
+    ):
+        if (root / relative).exists():
+            candidates.append(root / relative)
     for directory in (root / "src", root / "tests"):
         candidates.extend(directory.rglob("*.py"))
     if len(candidates) > 200:
@@ -103,6 +110,7 @@ def build(root: Path, install: bool = False) -> dict:
             check=True,
             timeout=600,
             shell=False,
+            stdout=sys.stderr,
         )
         report["installed"] = True
     state_dir.mkdir(exist_ok=True)
@@ -132,10 +140,41 @@ def run_project(root: Path, message: str | None, ingest: Path | None = None) -> 
     python = interpreter(root)
     if not python.is_file():
         raise ValueError("Faltan dependencias: ejecute agentcraft build --install.")
-    args = [str(python), "-m", "agent_app.runner", "--root", str(root)]
+    args = [str(python), "-X", "utf8", "-m", "agent_app.runner", "--root", str(root)]
     if message is not None:
         args += ["--message", message]
     if ingest is not None:
         args += ["--ingest", str(ingest.resolve(strict=True))]
     # Sin shell, sin auto-instalación ni evaluación de comandos del manifiesto.
     return subprocess.run(args, cwd=root, check=False, shell=False).returncode
+
+
+def run_request(root: Path, request: Path) -> int:
+    root = root.resolve(strict=True)
+    spec = ensure_built(root)
+    if spec.plan.kind.value not in {"expenses", "audit"}:
+        raise ValueError("invoke solo se admite para expenses y audit.")
+    request = request.absolute()
+    if request.is_symlink() or not request.is_file() or request.stat().st_size > 64_000:
+        raise ValueError("La solicitud debe ser un archivo JSON local de hasta 64 KB.")
+    json.loads(request.read_text(encoding="utf-8-sig"))
+    python = interpreter(root)
+    if not python.is_file():
+        raise ValueError("Ejecute build --install para preparar el runtime.")
+    return subprocess.run(
+        [
+            str(python),
+            "-X",
+            "utf8",
+            "-m",
+            "agent_app.runner",
+            "--root",
+            str(root),
+            "--request",
+            str(request),
+        ],
+        cwd=root,
+        shell=False,
+        check=False,
+        timeout=120,
+    ).returncode

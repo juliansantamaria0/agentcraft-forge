@@ -8,14 +8,15 @@
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft crea proyectos RAG, agentes con herramientas ReAct y equipos CrewAI.
+AgentCraft 0.2 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
 `run` lo ejecuta en un entorno separado o muestra el plan sin usar un modelo.
 
 La distribución propuesta se llama **agentcraft-forge** y el comando es **agentcraft**.
-`agentcraft` ya pertenece a otro proyecto en PyPI. Este repositorio es privado;
-la instalación desde GitHub requiere acceso y credenciales de Git configuradas.
+`agentcraft` ya pertenece a otro proyecto en PyPI. Este repositorio es público;
+la instalación desde GitHub requiere Git y Python 3.12.
 El wheel también puede instalarse localmente. La distribución en PyPI sigue pendiente.
 No se debe ejecutar `pip install agentcraft` para instalar este proyecto.
 
@@ -33,7 +34,7 @@ agentcraft --version
 Reabra la terminal si `ensurepath` modifica PATH. Para probar sin cambiar PATH:
 `python -m pipx run --spec . agentcraft --help`.
 
-Desde GitHub, con acceso al repositorio privado:
+Desde GitHub:
 
 ```console
 pipx install --python 3.12 "git+https://github.com/juliansantamaria0/agentcraft-forge.git@main"
@@ -51,6 +52,62 @@ Para reproducibilidad, sustituya `main` por un commit verificado o un tag public
 En sistemas con Python administrado externamente, prefiera pipx; no fuerce una
 instalación sobre el entorno del sistema. Las dependencias de cada agente generado
 se instalan en el `.venv` de su proyecto, separado de pipx.
+
+Si ya instaló desde este repositorio, actualice con `pipx reinstall agentcraft-forge`.
+Compruebe `agentcraft --version` y `agentcraft doctor`. La instalación desde un wheel
+local conserva ese origen en pipx: reinstale desde el nuevo wheel o desde GitHub según
+corresponda. No se han publicado distribuciones de esta herramienta en PyPI.
+
+## Usarlo desde el mismo chat
+
+Con un asistente que pueda ejecutar herramientas locales, instale el adaptador:
+
+```console
+agentcraft doctor
+agentcraft install-skill --directory .agents/skills
+```
+
+Ese comando instala la habilidad en el workspace. Para Codex global en PowerShell:
+
+```powershell
+agentcraft install-skill --directory "$HOME/.codex/skills"
+```
+
+Para otros clientes elija su directorio de habilidades configurado; el descubrimiento
+y la recarga dependen del cliente. El instalador no sobrescribe una habilidad distinta.
+No modifica la configuración global al instalar el paquete: la ubicación se elige
+explícitamente. Puede pedir al asistente que ejecute estos pasos por usted.
+
+Después, escriba: «Usa AgentCraft para crear mi agente de gastos en esta carpeta;
+comprueba su origen, instala el runtime y ejecuta sus pruebas». El adaptador exige
+invocar la CLI y comprobar sus resultados antes de atribuirle un proyecto.
+
+## Gastos personales y compromisos: motores sin API de IA
+
+```console
+agentcraft init --name mis-gastos --purpose "Registrar gastos personales y consultar resúmenes" --kind expenses --yes --json
+agentcraft build --project mis-gastos --install
+agentcraft inspect --project mis-gastos
+agentcraft run --project mis-gastos --message "Gasté 15k en transporte"
+```
+
+El último comando devuelve una **propuesta sin escribir**. Para registrarla, el chat
+envía una solicitud JSON explícita mediante invoke y espera el comprobante del motor.
+Las consultas de lenguaje libre pueden ser interpretadas por el asistente; el motor
+valida la solicitud antes de guardar. No es un LLM embebido en el parser.
+
+| Plantilla | Capacidades de dominio |
+|---|---|
+| expenses | COP en enteros, categorías neutrales, presupuestos por mes, registros múltiples atómicos, anulaciones, resúmenes e IDs idempotentes |
+| audit | Exports WhatsApp y journal, responsable declarado, fuentes y fechas, progreso reciente, candidatos revisables, snapshots y aplicación con backup |
+
+Cada proyecto incluye una habilidad local, agentcraft.json y agentcraft.provenance.json.
+`inspect` distingue modificaciones, build fresco y ausencia de pruebas de comportamiento.
+La evidencia es una huella local, no una firma de autoría.
+
+Vea [el flujo completo y las solicitudes JSON](docs/chat-workflow.md).
+No hay conector WhatsApp operativo ni importación automática de bases de otros proyectos.
+No se crean datos personales ficticios como si fueran del usuario.
 
 ## Inicio en tres comandos
 

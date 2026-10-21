@@ -15,7 +15,7 @@ def test_all_boilerplates_generate_and_compile(tmp_path, kind):
     spec = design("test-agent", "Asistente para documentación técnica y soporte", kind)
     target = generate(spec, tmp_path)
     report = build(target)
-    assert report["python_files"] >= 7
+    assert report["python_files"] >= (5 if kind in {Kind.expenses, Kind.audit} else 7)
     assert ensure_built(target) == spec
     assert (target / ".env.example").is_file()
     assert not (target / ".env").exists()

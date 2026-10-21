@@ -4,13 +4,21 @@ import json
 import os
 from collections.abc import Callable
 
+from agentcraft_forge import __version__
 from agentcraft_forge.schema import CAPABILITIES, AgentSpec, Kind, Plan
 
 
 def offline_plan(purpose: str, kind: Kind | None = None) -> Plan:
     text = purpose.casefold()
     if kind is None:
-        if any(
+        if any(word in text for word in ("gastos", "expense", "presupuesto personal")):
+            kind = Kind.expenses
+        elif any(
+            word in text
+            for word in ("open loop", "open-loop", "compromisos", "audit-loops")
+        ):
+            kind = Kind.audit
+        elif any(
             word in text for word in ("multiagente", "multi-agent", "equipo de agentes")
         ):
             kind = Kind.multi
@@ -81,4 +89,6 @@ def design(
     # Validar antes de enviar datos al proveedor o crear carpetas.
     baseline = AgentSpec(name=name, purpose=purpose, plan=offline_plan(purpose, kind))
     plan = (designer or ai_plan)(purpose, kind) if ai else baseline.plan
-    return AgentSpec(name=name, purpose=purpose, plan=plan)
+    return AgentSpec(
+        name=name, purpose=purpose, plan=plan, generator_version=__version__
+    )

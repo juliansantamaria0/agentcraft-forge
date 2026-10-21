@@ -1,5 +1,10 @@
 # 1. Concepción del meta-agente
 
+Desde 0.2 se incluyen motores de dominio expenses y audit, además de las tres
+arquitecturas con modelos. No necesitan una API de IA. El asistente interpreta y
+envía solicitudes JSON; el motor valida y confirma escrituras con comprobantes.
+Vea [operación por chat](chat-workflow.md) para el contrato completo y sus límites.
+
 ## Qué hace el producto
 
 AgentCraft transforma requisitos en un proyecto de software ejecutable. La unidad
@@ -44,6 +49,8 @@ evaluaciones, manteniendo este límite entre propuestas del modelo y capacidades
 | RAG | search_documents | Qdrant, fragmentación, MMR, filtro de tenant, umbral y citas |
 | Tools | repository_info, current_weather | Function calling con registro permitido y APIs fijas |
 | Multi | analyze, design, review | Tres tareas CrewAI con contexto explícito |
+| Expenses | record_expenses, summarize_expenses, set_budget | SQLite, COP en enteros, presupuestos por mes, anulaciones y comprobantes |
+| Audit | scan_commitments, apply_reviewed_commitments | Fuentes con evidencia, revisión, snapshots y aplicación verificada |
 
 El agente RAG es un workflow controlado: recupera evidencia y genera una respuesta.
 El agente tools ejecuta un bucle de decisión/acción/observación acotado. El equipo

@@ -1,0 +1,53 @@
+"""Contrato JSON: propuestas sin escritura y operaciones explícitas con comprobantes."""
+
+import argparse
+import json
+import sqlite3
+from datetime import date
+from pathlib import Path
+
+from agent_app.domain import handle, propose
+from agent_app.domain_common import DomainError
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="[[ name ]] / [[ kind ]]")
+    parser.add_argument("--root", type=Path, default=Path("."))
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument("--request", type=Path)
+    options.add_argument("--message")
+    parser.add_argument("--ingest", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        root = args.root.resolve(strict=True)
+        if args.ingest:
+            raise DomainError("unsupported_action", "Esta plantilla no admite ingestión vectorial.")
+        if args.request:
+            if args.request.is_symlink() or args.request.stat().st_size > 64_000:
+                raise DomainError("invalid_request", "Solicitud enlazada o superior a 64 KB.")
+            result = handle(root, json.loads(args.request.read_text(encoding="utf-8-sig")))
+            print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+            return 0
+        if args.message is not None:
+            print(json.dumps(propose(args.message, date.today()), ensure_ascii=False, indent=2))
+            return 0
+        print("Sesión de propuestas: no registra datos automáticamente. Escriba salir para terminar.")
+        while True:
+            try:
+                message = input("Tú> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return 0
+            if message.casefold() in {"salir", "exit", "quit"}:
+                return 0
+            if message:
+                print(json.dumps(propose(message), ensure_ascii=False, indent=2))
+    except DomainError as exc:
+        print(json.dumps({"status": "error", "persisted": None if exc.code in {"verification_failed", "operation_unconfirmed"} else False, "code": exc.code, "message": str(exc)}, ensure_ascii=False))
+        return 1
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        print(json.dumps({"status": "error", "persisted": None, "code": type(exc).__name__, "message": "No se pudo confirmar el estado. Revise o reintente con el mismo operation_id."}))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

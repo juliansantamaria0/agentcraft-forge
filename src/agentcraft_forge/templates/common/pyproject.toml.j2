@@ -10,6 +10,7 @@ description = "Agente generado con AgentCraft Forge"
 readme = "README.md"
 license = "MIT"
 dependencies = [
+[% if kind not in ['expenses', 'audit'] %]
   "httpx==0.28.1",
   "pydantic>=2.11.9,<2.13",
   "python-dotenv>=1.2.2,<2",
@@ -20,6 +21,7 @@ dependencies = [
   "langchain-text-splitters==1.1.3",
 [% elif kind == 'multi' %]
   "crewai==1.15.28",
+[% endif %]
 [% endif %]
 ]
 

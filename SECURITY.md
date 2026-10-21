@@ -17,3 +17,14 @@ Los agentes generados requieren controles de identidad, permisos, costes y evalu
 del dominio antes de producción. No registrar claves ni datos personales en issues.
 El mantenedor debe configurar un canal privado de vulnerabilidades antes de publicar.
 
+Los motores de dominio son locales y no autentican usuarios. owner es identidad
+declarada, no ACL. La evidencia de origen y los snapshots son hashes sin firma;
+no resisten a alguien que pueda modificar también el estado del proyecto. Los
+comprobantes afirman el resultado de una operación local, no un movimiento bancario.
+No hay conector WhatsApp ni importación automática de bases preexistentes.
+
+Un timeout o fallo posterior al commit puede devolver persisted=null. Consulte el
+comprobante o reintente con el mismo ID. No afirme que no se escribió nada solo
+porque la llamada terminó con error. Las aplicaciones del auditor guardan backups;
+pruebe restauración y gestione locks residuales antes de usarlas como servicio.
+

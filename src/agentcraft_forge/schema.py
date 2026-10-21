@@ -9,12 +9,16 @@ class Kind(StrEnum):
     rag = "rag"
     tools = "tools"
     multi = "multi"
+    expenses = "expenses"
+    audit = "audit"
 
 
 CAPABILITIES = {
     Kind.rag: {"search_documents"},
     Kind.tools: {"repository_info", "current_weather"},
     Kind.multi: {"analyze", "design", "review"},
+    Kind.expenses: {"record_expenses", "summarize_expenses", "set_budget"},
+    Kind.audit: {"scan_commitments", "apply_reviewed_commitments"},
 }
 
 
@@ -44,7 +48,8 @@ class AgentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: int = Field(default=1, ge=1, le=1)
-    template_version: str = Field(default="1", pattern=r"^1$")
+    template_version: str = Field(default="2", pattern=r"^[12]$")
+    generator_version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     name: str = Field(
         min_length=2, max_length=48, pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
     )

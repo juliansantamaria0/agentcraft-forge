@@ -1,0 +1,71 @@
+# [[ name ]]
+
+Motor `[[ kind ]]` creado por AgentCraft. Funciona sin API de IA; el asistente del
+chat puede interpretar lenguaje libre y enviar solicitudes JSON explícitas.
+Las propuestas no escriben datos. Un comprobante `persisted: true` confirma escritura.
+
+```console
+agentcraft build --install
+agentcraft inspect
+agentcraft run --message "dame un reumen de todos mis gastos"
+agentcraft invoke --request request.json
+```
+
+Ejecute desde esta carpeta; desde otra use `--project RUTA_ABSOLUTA`.
+En gastos, `run --message` devuelve una propuesta; añada un operation_id estable a
+cada escritura autorizada y use invoke. Repita el mismo ID solo para reintentar la
+misma operación. Solicitudes diferentes con el mismo ID producen conflicto.
+
+[% if kind == 'expenses' %]
+`request.json` de ejemplo (COP, pesos enteros):
+
+```json
+{"action":"record","operation_id":"mensaje-demo-001","currency":"COP","expenses":[{"amount":12000,"description":"Transporte","expense_date":"2026-10-21"}]}
+```
+
+Consultar un mes: `{"action":"summary","month":"2026-10"}`. Todo el historial:
+`{"action":"summary"}`. Presupuesto mensual: `{"action":"set_budget","operation_id":"presupuesto-demo-001","currency":"COP","month":"2026-10","amount":2500000}`.
+Anular un registro: `{"action":"void","operation_id":"anulacion-demo-001","expense_ids":[1],"reason":"Duplicado confirmado"}`.
+Consultar el comprobante original: `{"action":"receipt","operation_id":"mensaje-demo-001"}`.
+
+La base nueva `.data/expenses-v1.sqlite3` no importa ni modifica gastos.db de otras
+herramientas. No se inventa un presupuesto inicial ni se etiqueta un gasto como
+innecesario. Cada lote y su comprobante se confirman en una transacción SQLite.
+El comprobante refleja el estado al registrar la operación; una consulta nueva
+refleja el estado actual. No hay conversión de monedas ni conexión con cuentas.
+[% else %]
+Conserve los documentos reales en journal/ y los exports en whatsapp/. Registre
+las tareas en open-loops.md, por ejemplo `- [ ] [2026-10-01] Entregar informe`.
+No se crean tareas ficticias como datos del usuario.
+
+```json
+{"action":"scan","owner":"NOMBRE_DEL_RESPONSABLE","reference_date":"2026-10-21","stale_days":14,"recent_days":30}
+```
+
+El informe devuelve scan_id y candidatos con evidencia, responsables declarados,
+fechas y posibles coincidencias. Revise los candidatos. Para aplicar una selección:
+
+```json
+{"action":"apply","scan_id":"ID_DEVUELTO_POR_SCAN","candidate_ids":["ID_DEL_CANDIDATO_REVISADO"],"operation_id":"aplicacion-demo-001"}
+```
+
+Apply verifica el snapshot y guarda backup y comprobante. Rechaza informes incompletos,
+fuentes cambiadas y posibles duplicados. Un lock evita dos aplicaciones concurrentes;
+si un proceso se interrumpe, compruebe que terminó antes de retirar un lock residual.
+Las actualizaciones recientes detectadas se presentan para revisión; las heurísticas
+no demuestran que una tarea se haya completado ni que todas las promesas se detecten.
+[% endif %]
+
+## Uso desde el chat
+
+La habilidad local está en `.agents/skills/agentcraft-project/SKILL.md`.
+La compatibilidad de descubrimiento depende del asistente; puede adjuntar ese archivo
+como instrucciones si su cliente no descubre habilidades. No es un bot de WhatsApp.
+No comparta el directorio .data ni los recibos con datos personales en GitHub.
+
+## Pruebas
+
+Después de instalar el proyecto, use el Python de su venv:
+`python -m unittest discover -s tests -p test_domain.py`.
+No pruebe escrituras contra datos personales. El motor no autentica usuarios: para
+servir a varias personas añada aislamiento por identidad y autorización del servidor.

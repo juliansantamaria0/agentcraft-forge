@@ -27,4 +27,11 @@ jobs:
       - run: uv run --locked pytest --cov=agentcraft_forge --cov-report=term-missing
       - run: uv build --no-sources
       - run: uv run --locked twine check dist/*
+      - name: Probar el wheel fuera del checkout
+        shell: bash
+        run: |
+          uv venv .wheel-test
+          if [ "$RUNNER_OS" = "Windows" ]; then PYTHON=.wheel-test/Scripts/python.exe; else PYTHON=.wheel-test/bin/python; fi
+          uv pip install --python "$PYTHON" dist/*.whl
+          uv run --locked python scripts/wheel_smoke.py "$PYTHON"
 

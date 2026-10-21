@@ -1,5 +1,7 @@
 """Generación desde recursos incluidos en el wheel, independiente del cwd."""
 
+import hashlib
+import json
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 
@@ -24,6 +26,8 @@ SPECIFIC = {
     Kind.rag: ["rag/__init__.py", "rag/store.py", "rag/ingest.py", "rag/service.py"],
     Kind.tools: ["tools.py", "react.py"],
     Kind.multi: ["multi.py"],
+    Kind.expenses: [],
+    Kind.audit: [],
 }
 
 
@@ -51,9 +55,33 @@ def render(spec: AgentSpec) -> dict[str, str]:
         ).render(**context)
         for destination, source in TEMPLATES.items()
     }
-    for name in COMMON_RUNTIME + SPECIFIC[spec.plan.kind]:
+    domain = spec.plan.kind in {Kind.expenses, Kind.audit}
+    runtime = ["__init__.py"] if domain else COMMON_RUNTIME + SPECIFIC[spec.plan.kind]
+    for name in runtime:
         data = root.joinpath("runtime", name + ".tmpl").read_text(encoding="utf-8")
         result["src/agent_app/" + name] = data
+    if domain:
+        resources = files("agentcraft_forge.domains")
+        for source, destination in (
+            ("common.py", "domain_common.py"),
+            (spec.plan.kind.value + ".py", "domain.py"),
+        ):
+            result["src/agent_app/" + destination] = (
+                resources.joinpath(source)
+                .read_text(encoding="utf-8")
+                .replace(
+                    "from agentcraft_forge.domains.common import",
+                    "from agent_app.domain_common import",
+                )
+            )
+        for destination, source in (
+            ("src/agent_app/runner.py", "domain_runner.py.j2"),
+            ("README.md", "domain_readme.md.j2"),
+            ("tests/test_domain.py", "domain_test.py.j2"),
+        ):
+            result[destination] = env.from_string(
+                root.joinpath("common", source).read_text(encoding="utf-8")
+            ).render(**context)
     result["agentcraft.json"] = spec.model_dump_json(indent=2) + "\n"
     result["docs/architecture.md"] = (
         "# Diseño generado\n\n"
@@ -63,6 +91,34 @@ def render(spec: AgentSpec) -> dict[str, str]:
     if spec.plan.kind == Kind.rag:
         result["data/sample/policy.md"] = (
             "# Política ficticia\n\nLos tickets de prioridad alta se atienden en cuatro horas.\n"
+        )
+    if spec.plan.kind == Kind.audit:
+        result["open-loops.md"] = (
+            "# Compromisos\n\n<!-- Añada aquí sus tareas reales. No se incluyen ejemplos como datos del usuario. -->\n"
+        )
+        result["journal/.gitkeep"] = ""
+        result["whatsapp/.gitkeep"] = ""
+        result[
+            ".gitignore"
+        ] += "\n# Datos personales del auditor\njournal/*\n!journal/.gitkeep\nwhatsapp/*\n!whatsapp/.gitkeep\nopen-loops.md\n"
+    if spec.template_version == "2":
+        result[".agents/skills/agentcraft-project/SKILL.md"] = env.from_string(
+            root.joinpath("common", "project_skill.md.j2").read_text(encoding="utf-8")
+        ).render(**context)
+        provenance = {
+            "schema_version": 1,
+            "generator": "agentcraft-forge",
+            "generator_version": spec.generator_version,
+            "template_version": spec.template_version,
+            "spec_sha256": hashlib.sha256(spec.model_dump_json().encode()).hexdigest(),
+            "original_files": {
+                name: hashlib.sha256(data.encode()).hexdigest()
+                for name, data in sorted(result.items())
+            },
+            "limitations": "Huella de origen local, no firma ni prueba de autoría frente a un atacante local.",
+        }
+        result["agentcraft.provenance.json"] = (
+            json.dumps(provenance, ensure_ascii=False, indent=2) + "\n"
         )
     return result
 

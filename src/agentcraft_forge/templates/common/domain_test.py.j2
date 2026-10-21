@@ -1,0 +1,30 @@
+"""Prueba de dominio del proyecto generado; no usa modelos ni datos del usuario."""
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from agent_app.domain import handle
+
+
+class DomainContract(unittest.TestCase):
+    def test_persistence_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+[% if kind == 'expenses' %]
+            request = {"action": "record", "operation_id": "test-message-001", "currency": "COP", "expenses": [{"amount": 12000, "description": "Transporte", "expense_date": "2026-10-21"}]}
+            receipt = handle(root, request)
+            self.assertTrue(receipt["persisted"])
+            self.assertTrue(handle(root, request)["replayed"])
+            result = handle(root, {"action": "summary"})
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["total"], 12000)
+[% else %]
+            (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
+            (root / "journal").mkdir()
+            (root / "journal/2026-10-21.md").write_text("Me comprometí a entregar el documento mañana.\n", encoding="utf-8")
+            result = handle(root, {"action": "scan", "owner": "Persona de prueba", "reference_date": "2026-10-21"})
+            self.assertEqual(result["status"], "review_required")
+            self.assertEqual(result["candidates"][0]["due_date"], "2026-10-22")
+            self.assertFalse(result["persisted"])
+[% endif %]
