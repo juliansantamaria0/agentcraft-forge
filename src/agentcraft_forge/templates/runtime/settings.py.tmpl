@@ -1,0 +1,55 @@
+"""Configuración explícita sin leer archivos durante un import."""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+
+
+class Settings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    api_key: SecretStr = SecretStr("")
+    chat_model: str = "gpt-4.1-mini"
+    embedding_model: str = "text-embedding-3-small"
+    crew_model: str = "openai/gpt-4.1-mini"
+    tenant_id: str = Field(default="demo", min_length=1, max_length=100)
+    collection: str = Field(default="knowledge_demo_v1", pattern=r"^[a-zA-Z0-9_-]+$")
+    qdrant_url: str | None = None
+    qdrant_key: SecretStr = SecretStr("")
+    local_path: Path = Path(".data/qdrant")
+    top_k: int = Field(default=4, ge=1, le=20)
+    min_score: float = Field(default=0.2, ge=-1, le=1)
+    max_tool_calls: int = Field(default=4, ge=1, le=20)
+    max_steps: int = Field(default=12, ge=2, le=60)
+    timeout: float = Field(default=30, gt=0, le=120)
+    max_output_tokens: int = Field(default=1200, ge=1, le=8000)
+
+    def require_key(self) -> str:
+        value = self.api_key.get_secret_value()
+        if not value:
+            raise ValueError("Falta OPENAI_API_KEY. Configure .env o el entorno.")
+        return value
+
+
+def load_settings(env_file: Path | None = Path(".env")) -> Settings:
+    if env_file is not None:
+        load_dotenv(dotenv_path=env_file, override=False)
+    return Settings(
+        api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
+        chat_model=os.getenv("CHAT_MODEL", "gpt-4.1-mini"),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        crew_model=os.getenv("CREW_MODEL", "openai/gpt-4.1-mini"),
+        tenant_id=os.getenv("TENANT_ID", "demo"),
+        collection=os.getenv("QDRANT_COLLECTION", "knowledge_demo_v1"),
+        qdrant_url=os.getenv("QDRANT_URL") or None,
+        qdrant_key=SecretStr(os.getenv("QDRANT_API_KEY", "")),
+        local_path=Path(os.getenv("QDRANT_LOCAL_PATH", ".data/qdrant")),
+        top_k=int(os.getenv("TOP_K", "4")),
+        min_score=float(os.getenv("MIN_SCORE", "0.2")),
+        max_tool_calls=int(os.getenv("MAX_TOOL_CALLS", "4")),
+        max_steps=int(os.getenv("MAX_STEPS", "12")),
+        timeout=float(os.getenv("REQUEST_TIMEOUT", "30")),
+        max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "1200")),
+    )

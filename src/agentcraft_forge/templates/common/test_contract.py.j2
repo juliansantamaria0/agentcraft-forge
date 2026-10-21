@@ -1,0 +1,17 @@
+import json
+from pathlib import Path
+
+
+def test_generated_contract():
+    root = Path(__file__).resolve().parents[1]
+    spec = json.loads((root / "agentcraft.json").read_text(encoding="utf-8"))
+    assert spec["plan"]["kind"] == "[[ kind ]]"
+    assert spec["name"] == "[[ name ]]"
+    assert 1 <= spec["max_tool_calls"] <= 20
+
+
+def test_entry_point_importable():
+    from agent_app.runner import main
+
+    assert callable(main)
+

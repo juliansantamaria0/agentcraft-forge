@@ -1,0 +1,64 @@
+# [[ name ]]
+
+Proyecto generado con AgentCraft Forge; arquitectura `[[ kind ]]`.
+El propósito y las capacidades se conservan en `agentcraft.json` como datos.
+
+## Inicio
+
+```console
+agentcraft build --install
+```
+
+Copiar `.env.example` a `.env` y configurar los modelos y la clave del proveedor.
+Linux/macOS: `cp .env.example .env`. PowerShell: `Copy-Item .env.example .env`.
+
+[% if kind == 'rag' %]
+```console
+agentcraft run --ingest data/sample
+agentcraft run --message "¿Cuánto tarda un ticket de prioridad alta?"
+```
+
+Usa Qdrant en disco por defecto, para un proceso de desarrollo. Para concurrencia,
+configure QDRANT_URL y credenciales de servidor. Cada ingestión necesita una colección
+nueva; evalúe el snapshot antes de promoverlo a lectores de producción.
+[% elif kind == 'tools' %]
+```console
+agentcraft run --message "Consulta qdrant/qdrant y el clima en Bogota"
+```
+
+Las APIs son destinos fijos de solo lectura, con argumentos restringidos y límites.
+No existe una herramienta de shell ni una URL arbitraria controlada por el modelo.
+[% else %]
+```console
+agentcraft run --message "Proponer módulos, riesgos y pruebas para este proyecto"
+```
+
+CrewAI ejecuta analista, arquitecto y revisor con contexto explícito entre tareas.
+No tiene navegación web, memoria persistente ni ejecución de código.
+[% endif %]
+
+`agentcraft run` sin --message abre una sesión local; `salir` termina. Se conserva
+solo contexto reciente en memoria del proceso y no hay memoria entre sesiones.
+`agentcraft run --dry-run` muestra el plan sin llamar a un modelo.
+
+## Desarrollo
+
+```console
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
+```
+
+Ejecute estos comandos dentro del venv del proyecto o use su intérprete explícitamente.
+Para reproducibilidad de despliegue, genere y versione un lock del proyecto (por ejemplo
+`uv lock`); el lock de la CLI no fija las dependencias de este agente independiente.
+
+## Producción
+
+El proyecto aporta una base ejecutable. Antes de aceptar tráfico real: identidad y ACL,
+presupuesto de coste, validación con el corpus real, trazas con redacción, backup y
+restauración Qdrant, cancelación del worker y revisión de las condiciones de APIs.
+Las citas se validan por ID; la implicación factual requiere evaluación adicional.
+Consulte `docs/architecture.md`. No se incluyen secretos, modelos entrenados ni un
+servidor HTTP autenticado.
+

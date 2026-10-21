@@ -1,0 +1,9 @@
+recursive-include src/agentcraft_forge/templates *.j2 *.tmpl
+include README.md LICENSE
+include uv.lock CHANGELOG.md SECURITY.md
+include VALIDATION.md
+include IMPLEMENTATION_GUIDE.md
+recursive-include docs *.md
+recursive-include scripts *.py
+recursive-include tests *.py
+

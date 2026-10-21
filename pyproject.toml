@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=80,<83", "wheel>=0.45,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcraft-forge"
+dynamic = ["version"]
+description = "CLI para diseñar y generar proyectos de agentes con plantillas verificables"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = ["typer>=0.27,<1", "rich>=14,<15", "pydantic>=2.11.9,<2.13", "jinja2>=3.1.6,<4"]
+
+[project.optional-dependencies]
+ai = ["langchain-openai==1.7.2", "python-dotenv>=1.2.2,<2"]
+
+[project.scripts]
+agentcraft = "agentcraft_forge.cli:app"
+
+[tool.setuptools.dynamic]
+version = {attr = "agentcraft_forge.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agentcraft_forge = ["templates/common/*.j2", "templates/runtime/*.tmpl", "templates/runtime/rag/*.tmpl", "templates/tests/*.tmpl"]
+
+[dependency-groups]
+dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.14,<1", "black>=26,<27", "build>=1.3,<2", "twine>=6,<7", "pipx>=1.7,<2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = ["templates"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S603"]
+"src/agentcraft_forge/project.py" = ["S603"]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+

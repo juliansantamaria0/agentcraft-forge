@@ -1,0 +1,39 @@
+"""Qdrant local para pruebas o servidor para ejecución concurrente."""
+
+from langchain_core.embeddings import Embeddings
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client import models as qm
+
+from agent_app.settings import Settings
+
+
+def open_client(settings: Settings) -> QdrantClient:
+    if settings.qdrant_url:
+        return QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_key.get_secret_value() or None,
+            timeout=settings.timeout,
+        )
+    settings.local_path.mkdir(parents=True, exist_ok=True)
+    return QdrantClient(path=str(settings.local_path))
+
+
+def tenant_filter(tenant_id: str) -> qm.Filter:
+    return qm.Filter(
+        must=[
+            qm.FieldCondition(
+                key="metadata.tenant_id", match=qm.MatchValue(value=tenant_id)
+            )
+        ]
+    )
+
+
+def vector_store(
+    client: QdrantClient, collection: str, embeddings: Embeddings
+) -> QdrantVectorStore:
+    if not client.collection_exists(collection):
+        raise ValueError("La colección no existe. Ejecute agents ingest primero.")
+    return QdrantVectorStore(
+        client=client, collection_name=collection, embedding=embeddings
+    )

@@ -1,0 +1,41 @@
+"""Eventos operativos; no se registran prompts, documentos ni secretos."""
+
+import json
+import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from uuid import uuid4
+
+LOGGER = logging.getLogger("agent_app")
+
+
+def configure_logging() -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.handlers = [handler]
+    LOGGER.setLevel(logging.INFO)
+    LOGGER.propagate = False
+
+
+@contextmanager
+def operation(name: str) -> Iterator[str]:
+    run_id = str(uuid4())
+    started = time.monotonic()
+    status = "ok"
+    try:
+        yield run_id
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        LOGGER.info(
+            json.dumps(
+                {
+                    "operation": name,
+                    "run_id": run_id,
+                    "status": status,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                }
+            )
+        )

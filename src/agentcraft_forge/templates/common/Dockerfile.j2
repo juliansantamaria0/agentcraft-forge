@@ -1,0 +1,12 @@
+FROM python:3.12.14-slim-bookworm
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir . && \
+    groupadd --gid 10001 app && useradd --uid 10001 --gid app --create-home app
+COPY --chown=app:app . .
+RUN mkdir -p /app/.data && chown app:app /app/.data
+ENV PYTHONUNBUFFERED=1 CREWAI_TELEMETRY_DISABLED=true OTEL_SDK_DISABLED=true
+USER 10001:10001
+ENTRYPOINT ["agent", "--root", "/app"]
+

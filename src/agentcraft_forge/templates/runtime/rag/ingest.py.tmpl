@@ -1,0 +1,82 @@
+"""Ingestión en una colección nueva: snapshot inmutable y promoción explícita."""
+
+import hashlib
+from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
+
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+from langchain_qdrant import QdrantVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from qdrant_client import QdrantClient
+from qdrant_client import models as qm
+
+MAX_FILE_BYTES = 1_000_000
+MAX_CORPUS_BYTES = 10_000_000
+
+
+def load_documents(directory: Path, tenant_id: str) -> list[Document]:
+    root = directory.resolve(strict=True)
+    documents = []
+    total = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
+            continue
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise ValueError("No se permiten enlaces fuera del corpus.")
+        content = path.read_bytes()
+        total += len(content)
+        if len(content) > MAX_FILE_BYTES or total > MAX_CORPUS_BYTES:
+            raise ValueError("El corpus supera el límite de ingestión del ejemplo.")
+        text = content.decode("utf-8")
+        if text.strip():
+            documents.append(
+                Document(
+                    page_content=text,
+                    metadata={
+                        "source": path.relative_to(root).as_posix(),
+                        "tenant_id": tenant_id,
+                        "revision": hashlib.sha256(content).hexdigest(),
+                    },
+                )
+            )
+    if not documents:
+        raise ValueError("No hay documentos UTF-8 .md o .txt con contenido.")
+    return documents
+
+
+def ingest(
+    client: QdrantClient,
+    collection: str,
+    embeddings: Embeddings,
+    directory: Path,
+    tenant_id: str,
+) -> int:
+    if client.collection_exists(collection):
+        raise ValueError(
+            "La colección ya existe: use otro QDRANT_COLLECTION para un snapshot nuevo."
+        )
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800, chunk_overlap=120, add_start_index=True
+    )
+    chunks = splitter.split_documents(load_documents(directory, tenant_id))
+    dimensions = len(embeddings.embed_query("dimension probe"))
+    client.create_collection(
+        collection_name=collection,
+        vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
+    )
+    store = QdrantVectorStore(
+        client=client, collection_name=collection, embedding=embeddings
+    )
+    ids = [
+        str(
+            uuid5(
+                NAMESPACE_URL,
+                f"{tenant_id}:{doc.metadata['source']}:"
+                f"{doc.metadata['revision']}:{doc.metadata['start_index']}",
+            )
+        )
+        for doc in chunks
+    ]
+    store.add_documents(chunks, ids=ids)
+    return len(chunks)

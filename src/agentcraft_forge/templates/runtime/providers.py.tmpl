@@ -1,0 +1,24 @@
+"""Adaptadores de proveedor; los tests inyectan modelos y embeddings locales."""
+
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+from agent_app.settings import Settings
+
+
+def chat_model(settings: Settings) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=settings.chat_model,
+        api_key=settings.require_key(),
+        timeout=settings.timeout,
+        max_retries=1,
+        max_tokens=settings.max_output_tokens,
+    )
+
+
+def embeddings_model(settings: Settings) -> OpenAIEmbeddings:
+    return OpenAIEmbeddings(
+        model=settings.embedding_model,
+        api_key=settings.require_key(),
+        request_timeout=settings.timeout,
+        max_retries=1,
+    )
