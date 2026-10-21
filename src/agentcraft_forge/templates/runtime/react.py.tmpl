@@ -1,6 +1,7 @@
 """Bucle de decisión/acción/observación explícito y con límites verificables."""
 
 import json
+import math
 import time
 from collections.abc import Callable
 
@@ -38,7 +39,15 @@ def run_react(
 ) -> AgentResult:
     if not question.strip() or len(question) > 16000:
         raise ValueError("La pregunta debe tener entre 1 y 16000 caracteres.")
-    if max_steps < 1 or max_tool_calls < 1 or deadline_seconds <= 0:
+    if (
+        type(max_steps) is not int
+        or max_steps < 1
+        or type(max_tool_calls) is not int
+        or max_tool_calls < 1
+        or type(deadline_seconds) not in (int, float)
+        or not math.isfinite(deadline_seconds)
+        or deadline_seconds <= 0
+    ):
         raise ValueError("Los límites deben ser positivos.")
     registry = {t.name: t for t in tools}
     if len(registry) != len(tools):
@@ -56,6 +65,7 @@ def run_react(
     deadline = clock() + deadline_seconds
     calls = 0
     observations = []
+    seen_call_ids = set()
 
     def ensure_time() -> None:
         if clock() >= deadline:
@@ -67,12 +77,21 @@ def run_react(
         ensure_time()
         if not isinstance(response, AIMessage):
             raise ValueError("Respuesta de modelo no válida.")
+        if response.invalid_tool_calls:
+            raise ValueError("El modelo produjo una llamada de herramienta inválida.")
+        identifiers = [call["id"] for call in response.tool_calls]
+        if (
+            any(
+                not isinstance(value, str) or not value.strip() for value in identifiers
+            )
+            or len(set(identifiers)) != len(identifiers)
+            or seen_call_ids.intersection(identifiers)
+        ):
+            raise ValueError(
+                "Cada llamada requiere un identificador válido y único en la sesión."
+            )
         messages.append(response)
         if not response.tool_calls:
-            if response.invalid_tool_calls:
-                raise ValueError(
-                    "El modelo produjo una llamada de herramienta inválida."
-                )
             content = response.content
             answer = content if isinstance(content, str) else json.dumps(content)
             if not answer.strip():
@@ -82,6 +101,7 @@ def run_react(
             )
         if calls + len(response.tool_calls) > max_tool_calls:
             raise BudgetExceeded("Se agotó el presupuesto de herramientas.")
+        seen_call_ids.update(identifiers)
         for call in response.tool_calls:
             ensure_time()
             calls += 1  # También cuentan los intentos inválidos o denegados.

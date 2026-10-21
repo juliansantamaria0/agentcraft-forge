@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.2
+# Operación por chat y comprobantes — 0.2.3
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -147,6 +147,12 @@ Los comprobantes conservan los registros de su operación y totales compactos; n
 duplican todo el historial del mes con cada escritura.
 Los componentes de cada resumen se leen desde el mismo snapshot SQLite, aunque otro
 proceso registre un gasto durante la consulta. Una consulta posterior refleja ese gasto.
+
+Desde 0.2.3, summary y receipt abren la base mediante una URI SQLite con mode=ro.
+No solicitan un lock de escritura para consultar un comprobante. Sin base, summary
+devuelve un resultado vacío calculado en memoria y receipt devuelve not_found; ninguno
+crea .data. Si existe una base sin esquema válido, la consulta falla sin inicializarla
+ni repararla. Se mantienen las reglas de concurrencia y bloqueo propias de SQLite.
 
 ## Reintentos, correcciones y estado incierto
 

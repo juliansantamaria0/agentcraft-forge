@@ -1,13 +1,13 @@
-# Evidencia de validación — 0.2.2
+# Evidencia de validación — 0.2.3
 
 Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 149 pruebas correctas |
+| pytest, red bloqueada por fixture | 170 pruebas correctas con todos los extras |
 | Cobertura de sentencias | 89 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
-| Black | 22 archivos de fuente, scripts y pruebas formateados |
+| Black | 23 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
 | Instalación del wheel con pipx | Correcta en un PIPX_HOME temporal, sin cambiar el PATH global del usuario |
 | Smoke del wheel fuera del checkout | Cinco tipos pasan init, build, inspect y run --dry-run; adaptador y dos pruebas de dominio correctos |
@@ -16,7 +16,7 @@ Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 | Reintentos y conflictos | Misma operación no duplica; argumentos distintos con el mismo ID se rechazan |
 | Auditoría de dominio | Tres candidatos con fuentes, progreso reciente revisado, aplicación con backup y reintento sin duplicados |
 | Pruebas incluidas en los proyectos generados | unittest de expenses y audit correctos en sus propios venvs |
-| CLI nueva contra proyecto 0.2.1 | Inspect y propuesta correctos; hashes del código, manifiesto y base de datos sin cambios |
+| Compatibilidad verificada en 0.2.2 contra proyecto 0.2.1 | Inspect y propuesta correctos; hashes del código, manifiesto y base de datos sin cambios |
 
 La batería prueba validación, menú interactivo, cancelación, generación de las cinco
 arquitecturas, recursos instalados, no sobrescritura, tratamiento del propósito como
@@ -47,6 +47,16 @@ el camino de instalación real se comprueba por separado desde el paquete instal
 Inspect también conserva su respuesta JSON ante Python inválido o una tabla project
 de tipo incorrecto en pyproject.toml.
 
+La versión 0.2.3 añade 21 casos: cinco de consultas de gastos sin escritura y dieciséis
+del runtime ReAct con modelo y herramientas simulados. Se verifica el rechazo del lote
+antes de cualquier herramienta ante llamadas mal formadas, IDs inválidos o presupuesto
+insuficiente, y que un ID reutilizado no repita la llamada en un turno posterior.
+Se comprueban denegaciones, plazo expirado y conservación de observaciones válidas.
+La cobertura indicada instrumenta fuente de la CLI y de los motores de dominio;
+la plantilla ReAct .tmpl se prueba por comportamiento y no figura en ese porcentaje.
+La consulta de comprobantes se prueba con otro escritor que mantiene cambios sin
+confirmar, y el resumen de una copia generada no crea una base al consultar sin datos.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -63,7 +73,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```

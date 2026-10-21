@@ -310,3 +310,61 @@ def test_summary_uses_one_snapshot_when_another_writer_commits(tmp_path, monkeyp
     assert result["total"] == 12000
     assert result["categories"] == {"Transporte": 12000}
     assert handle(tmp_path, {"action": "summary"})["count"] == 2
+
+
+def test_empty_summary_does_not_create_persistent_state(tmp_path):
+    result = handle(tmp_path, {"action": "summary", "month": "2026-10"})
+    assert result["count"] == result["total"] == 0
+    assert result["monthly_budget"] is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_receipt_does_not_create_database(tmp_path):
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, {"action": "receipt", "operation_id": "missing-message-001"})
+    assert error.value.code == "not_found"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_read_queries_work_while_writer_holds_reserved_lock(tmp_path, monkeypatch):
+    first = handle(tmp_path, record())
+    original_connect = sqlite3.connect
+    writer = original_connect(tmp_path / ".data/expenses-v1.sqlite3")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE expenses SET amount = 999999")
+
+    def connect(*args, **kwargs):
+        kwargs["timeout"] = 0.01
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    try:
+        assert handle(tmp_path, {"action": "summary"})["total"] == 12000
+        replay = handle(tmp_path, {"action": "receipt", "operation_id": "message-0001"})
+        assert replay["record_ids"] == first["record_ids"]
+        assert replay["replayed"] is True
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_queries_do_not_repair_or_initialize_an_existing_empty_database(tmp_path):
+    directory = tmp_path / ".data"
+    directory.mkdir()
+    path = directory / "expenses-v1.sqlite3"
+    sqlite3.connect(path).close()
+    original = path.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError):
+        handle(tmp_path, {"action": "summary"})
+    assert path.read_bytes() == original
+
+
+def test_readonly_uri_preserves_spaces_unicode_and_uri_metacharacters(tmp_path):
+    root = tmp_path / "Prueba café #100%"
+    root.mkdir()
+    handle(root, record())
+    assert handle(root, {"action": "summary"})["count"] == 1
+    assert (
+        handle(root, {"action": "receipt", "operation_id": "message-0001"})["persisted"]
+        is True
+    )

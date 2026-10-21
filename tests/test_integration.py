@@ -123,6 +123,8 @@ def test_generated_runtime_persists_across_processes(tmp_path):
         )
         return json.loads(result.stdout)
 
+    assert invoke({"action": "summary"})["total"] == 0
+    assert not (target / ".data").exists()
     request = {
         "action": "record",
         "operation_id": "message-unicode-001",

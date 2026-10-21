@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.3 — 2026-10-21
+
+- Summary y receipt consultan SQLite mediante URI de solo lectura y un snapshot.
+  Consultar un proyecto sin datos no crea .data; un comprobante ausente tampoco.
+- Las consultas no inicializan ni reparan bases existentes y no solicitan el lock
+  de escritura para leer comprobantes. Rutas con espacios, Unicode, # y % verificadas.
+- ReAct valida cada respuesta completa antes de ejecutar su lote: rechaza llamadas
+  mal formadas e identificadores ausentes, vacíos o repetidos dentro de la sesión.
+- Los presupuestos ReAct exigen contadores enteros y tiempo positivo finito; la
+  validación ocurre antes de invocar el modelo. Se conservan denegaciones y límites.
+- Pruebas sin modelos ni APIs reales para el runtime ReAct, lecturas concurrentes y
+  copias generadas. El proyecto de gastos incluye su prueba de consulta sin escritura.
+
 ## 0.2.2 — 2026-10-21
 
 - Un nuevo build invalida su comprobante anterior antes de validar o instalar. Si

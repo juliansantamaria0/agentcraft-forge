@@ -12,6 +12,8 @@ class DomainContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 [% if kind == 'expenses' %]
+            self.assertEqual(handle(root, {"action": "summary"})["total"], 0)
+            self.assertFalse((root / ".data").exists())
             request = {"action": "record", "operation_id": "test-message-001", "currency": "COP", "expenses": [{"amount": 12000, "description": "Transporte", "expense_date": "2026-10-21"}]}
             receipt = handle(root, request)
             self.assertTrue(receipt["persisted"])
@@ -19,6 +21,7 @@ class DomainContract(unittest.TestCase):
             result = handle(root, {"action": "summary"})
             self.assertEqual(result["count"], 1)
             self.assertEqual(result["total"], 12000)
+            self.assertEqual(handle(root, {"action": "receipt", "operation_id": "test-message-001"})["record_ids"], receipt["record_ids"])
 [% else %]
             (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
             (root / "journal").mkdir()

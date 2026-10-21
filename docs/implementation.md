@@ -119,10 +119,18 @@ Function calling vincula un esquema a cada herramienta. El runtime resuelve el n
 en su registro, valida argumentos, ejecuta y devuelve un `ToolMessage`. Solo se
 permiten repositorios y ciudades definidos en enums; nunca una URL libre.
 
-Los intentos inválidos también cuentan para el presupuesto. Si un modelo solicita
+Los intentos denegados o con argumentos inválidos cuentan para el presupuesto. Si un modelo solicita
 varias llamadas en una respuesta, se verifica el presupuesto total antes de ejecutar.
 Los resultados HTTP tienen límite de tamaño, y los errores se convierten en
 observaciones acotadas. Los modelos y APIs reales requieren pruebas de integración.
+
+Desde 0.2.3, una respuesta con invalid_tool_calls se rechaza aunque también contenga
+llamadas válidas. Los IDs deben ser cadenas no vacías y únicas en toda la sesión;
+se comprueba el lote completo antes de ejecutar la primera herramienta de esa respuesta.
+Los contadores de pasos y llamadas deben ser enteros positivos, excluyendo booleanos,
+y el tiempo debe ser positivo y finito. Estos límites se validan antes de llamar al
+modelo. El plazo es cooperativo: se comprueba entre operaciones, junto con los timeouts
+del proveedor y de HTTP; no cancela por sí solo una función bloqueada.
 
 ## Plantilla multiagente
 
@@ -146,16 +154,19 @@ idempotencia y comprobación del recibo. No basta con describir esos controles e
 
 ## Tests y evidencias
 
-La batería de la CLI verifica los tres boilerplates, el modo interactivo, cancelación,
+La batería de la CLI verifica los cinco boilerplates, el modo interactivo, cancelación,
 rutas inválidas, no sobrescritura, inyección de texto, capacidades no aprobadas,
 frescura del build y que validar sintaxis no ejecute código. Se usa un diseñador
 inyectado para probar el camino de IA sin credenciales.
 
 `wheel_smoke.py` se ejecuta desde un directorio temporal usando el Python donde se
-instaló el wheel. Genera los tres tipos, ejecuta build y run offline. Esto detecta
+instaló el wheel. Genera los cinco tipos, ejecuta build y run offline. Esto detecta
 plantillas ausentes que no se verían en una instalación editable.
 
 Los tests básicos generados comprueban contratos e importación. Deben ampliarse con
 pruebas de dominio y de herramientas; no equivalen a la batería de la CLI ni a una
 evaluación de modelos. Mantenga separados los resultados locales, CI y pruebas reales.
+Las pruebas del runtime ReAct ejecutan la plantilla con respuestas y herramientas
+simuladas; requieren el extra ai, instalado por el comando de desarrollo y por CI.
+No hacen peticiones al proveedor ni a APIs. Sin ese extra, pytest señala su omisión.
 

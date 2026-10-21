@@ -40,6 +40,9 @@ los meses nombrados necesitan año. Rangos, semanas, fechas contradictorias o un
 petición que mezcle registro y resumen requieren aclaración.
 En lotes con varios importes, los conceptos sin precio no se descartan.
 Los resúmenes se leen en un único snapshot SQLite incluso con otro escritor activo.
+Summary y receipt abren una base existente en modo de solo lectura. Consultar sin
+datos no crea .data; tampoco se inicializa ni repara una base existente al consultarla.
+Un comprobante inexistente devuelve not_found y no registra ninguna operación.
 [% else %]
 Conserve los documentos reales en journal/ y los exports en whatsapp/. Registre
 las tareas en open-loops.md, por ejemplo `- [ ] [2026-10-01] Entregar informe`.

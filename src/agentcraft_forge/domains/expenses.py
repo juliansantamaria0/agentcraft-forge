@@ -197,18 +197,40 @@ def summary(connection: sqlite3.Connection, request: dict) -> dict:
     }
 
 
+def read_query(database: Path, request: dict) -> dict:
+    """Consulta un snapshot sin crear ni reparar archivos de datos."""
+    existing = database.exists()
+    if not existing and request["action"] == "receipt":
+        raise DomainError("not_found", "No existe un comprobante para esa operación.")
+    location = database.as_uri() + "?mode=ro" if existing else ":memory:"
+    with closing(sqlite3.connect(location, uri=True, timeout=10)) as connection:
+        connection.row_factory = sqlite3.Row
+        if not existing:
+            connection.executescript(SCHEMA)  # Solo memoria; no crea .data ni archivos.
+        connection.execute("BEGIN")
+        if request["action"] == "summary":
+            return summary(connection, request)
+        row = connection.execute(
+            "SELECT receipt FROM operations WHERE operation_id = ?",
+            (request["operation_id"],),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                "not_found", "No existe un comprobante para esa operación."
+            )
+        return {**json.loads(row["receipt"]), "replayed": True}
+
+
 def handle(root: Path, request: object) -> dict:
     request = validate_request(request)  # Validar todo el lote antes de tocar SQLite.
     database = safe_path(root, ".data/expenses-v1.sqlite3")
+    if request["action"] in {"summary", "receipt"}:
+        return read_query(database, request)
     database.parent.mkdir(exist_ok=True)
     with closing(sqlite3.connect(database, timeout=10)) as connection:
         connection.row_factory = sqlite3.Row
         connection.executescript(SCHEMA)
         action = request["action"]
-        if action == "summary":
-            # Todas las consultas del resumen deben compartir el mismo snapshot.
-            connection.execute("BEGIN")
-            return summary(connection, request)
         identifier = request["operation_id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -216,13 +238,6 @@ def handle(root: Path, request: object) -> dict:
                 "SELECT request_hash,receipt FROM operations WHERE operation_id = ?",
                 (identifier,),
             ).fetchone()
-            if action == "receipt":
-                if previous is None:
-                    raise DomainError(
-                        "not_found", "No existe un comprobante para esa operación."
-                    )
-                connection.rollback()
-                return {**json.loads(previous["receipt"]), "replayed": True}
             request_hash = digest(request)
             if previous:
                 if previous["request_hash"] != request_hash:

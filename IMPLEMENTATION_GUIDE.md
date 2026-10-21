@@ -1,6 +1,6 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
-**Guía técnica y código completo · Versión 0.2.2 · 21 de octubre de 2026**
+**Guía técnica y código completo · Versión 0.2.3 · 21 de octubre de 2026**
 
 El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
 
@@ -10,7 +10,7 @@ El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructu
 
 ## Uso desde el chat, gastos y compromisos en 0.2
 
-### Operación por chat y comprobantes — 0.2.2
+### Operación por chat y comprobantes — 0.2.3
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -159,6 +159,12 @@ Los comprobantes conservan los registros de su operación y totales compactos; n
 duplican todo el historial del mes con cada escritura.
 Los componentes de cada resumen se leen desde el mismo snapshot SQLite, aunque otro
 proceso registre un gasto durante la consulta. Una consulta posterior refleja ese gasto.
+
+Desde 0.2.3, summary y receipt abren la base mediante una URI SQLite con mode=ro.
+No solicitan un lock de escritura para consultar un comprobante. Sin base, summary
+devuelve un resultado vacío calculado en memoria y receipt devuelve not_found; ninguno
+crea .data. Si existe una base sin esquema válido, la consulta falla sin inicializarla
+ni repararla. Se mantienen las reglas de concurrencia y bloqueo propias de SQLite.
 
 #### Reintentos, correcciones y estado incierto
 
@@ -667,10 +673,18 @@ Function calling vincula un esquema a cada herramienta. El runtime resuelve el n
 en su registro, valida argumentos, ejecuta y devuelve un `ToolMessage`. Solo se
 permiten repositorios y ciudades definidos en enums; nunca una URL libre.
 
-Los intentos inválidos también cuentan para el presupuesto. Si un modelo solicita
+Los intentos denegados o con argumentos inválidos cuentan para el presupuesto. Si un modelo solicita
 varias llamadas en una respuesta, se verifica el presupuesto total antes de ejecutar.
 Los resultados HTTP tienen límite de tamaño, y los errores se convierten en
 observaciones acotadas. Los modelos y APIs reales requieren pruebas de integración.
+
+Desde 0.2.3, una respuesta con invalid_tool_calls se rechaza aunque también contenga
+llamadas válidas. Los IDs deben ser cadenas no vacías y únicas en toda la sesión;
+se comprueba el lote completo antes de ejecutar la primera herramienta de esa respuesta.
+Los contadores de pasos y llamadas deben ser enteros positivos, excluyendo booleanos,
+y el tiempo debe ser positivo y finito. Estos límites se validan antes de llamar al
+modelo. El plazo es cooperativo: se comprueba entre operaciones, junto con los timeouts
+del proveedor y de HTTP; no cancela por sí solo una función bloqueada.
 
 #### Plantilla multiagente
 
@@ -694,18 +708,21 @@ idempotencia y comprobación del recibo. No basta con describir esos controles e
 
 #### Tests y evidencias
 
-La batería de la CLI verifica los tres boilerplates, el modo interactivo, cancelación,
+La batería de la CLI verifica los cinco boilerplates, el modo interactivo, cancelación,
 rutas inválidas, no sobrescritura, inyección de texto, capacidades no aprobadas,
 frescura del build y que validar sintaxis no ejecute código. Se usa un diseñador
 inyectado para probar el camino de IA sin credenciales.
 
 `wheel_smoke.py` se ejecuta desde un directorio temporal usando el Python donde se
-instaló el wheel. Genera los tres tipos, ejecuta build y run offline. Esto detecta
+instaló el wheel. Genera los cinco tipos, ejecuta build y run offline. Esto detecta
 plantillas ausentes que no se verían en una instalación editable.
 
 Los tests básicos generados comprueban contratos e importación. Deben ampliarse con
 pruebas de dominio y de herramientas; no equivalen a la batería de la CLI ni a una
 evaluación de modelos. Mantenga separados los resultados locales, CI y pruebas reales.
+Las pruebas del runtime ReAct ejecutan la plantilla con respuestas y herramientas
+simuladas; requieren el extra ai, instalado por el comando de desarrollo y por CI.
+No hacen peticiones al proveedor ni a APIs. Sin ese extra, pytest señala su omisión.
 
 
 
@@ -1556,7 +1573,7 @@ app()
 ````python
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 ````
 
 
@@ -1933,18 +1950,40 @@ def summary(connection: sqlite3.Connection, request: dict) -> dict:
     }
 
 
+def read_query(database: Path, request: dict) -> dict:
+    """Consulta un snapshot sin crear ni reparar archivos de datos."""
+    existing = database.exists()
+    if not existing and request["action"] == "receipt":
+        raise DomainError("not_found", "No existe un comprobante para esa operación.")
+    location = database.as_uri() + "?mode=ro" if existing else ":memory:"
+    with closing(sqlite3.connect(location, uri=True, timeout=10)) as connection:
+        connection.row_factory = sqlite3.Row
+        if not existing:
+            connection.executescript(SCHEMA)  # Solo memoria; no crea .data ni archivos.
+        connection.execute("BEGIN")
+        if request["action"] == "summary":
+            return summary(connection, request)
+        row = connection.execute(
+            "SELECT receipt FROM operations WHERE operation_id = ?",
+            (request["operation_id"],),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                "not_found", "No existe un comprobante para esa operación."
+            )
+        return {**json.loads(row["receipt"]), "replayed": True}
+
+
 def handle(root: Path, request: object) -> dict:
     request = validate_request(request)  # Validar todo el lote antes de tocar SQLite.
     database = safe_path(root, ".data/expenses-v1.sqlite3")
+    if request["action"] in {"summary", "receipt"}:
+        return read_query(database, request)
     database.parent.mkdir(exist_ok=True)
     with closing(sqlite3.connect(database, timeout=10)) as connection:
         connection.row_factory = sqlite3.Row
         connection.executescript(SCHEMA)
         action = request["action"]
-        if action == "summary":
-            # Todas las consultas del resumen deben compartir el mismo snapshot.
-            connection.execute("BEGIN")
-            return summary(connection, request)
         identifier = request["operation_id"]
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -1952,13 +1991,6 @@ def handle(root: Path, request: object) -> dict:
                 "SELECT request_hash,receipt FROM operations WHERE operation_id = ?",
                 (identifier,),
             ).fetchone()
-            if action == "receipt":
-                if previous is None:
-                    raise DomainError(
-                        "not_found", "No existe un comprobante para esa operación."
-                    )
-                connection.rollback()
-                return {**json.loads(previous["receipt"]), "replayed": True}
             request_hash = digest(request)
             if previous:
                 if previous["request_hash"] != request_hash:
@@ -3088,6 +3120,9 @@ los meses nombrados necesitan año. Rangos, semanas, fechas contradictorias o un
 petición que mezcle registro y resumen requieren aclaración.
 En lotes con varios importes, los conceptos sin precio no se descartan.
 Los resúmenes se leen en un único snapshot SQLite incluso con otro escritor activo.
+Summary y receipt abren una base existente en modo de solo lectura. Consultar sin
+datos no crea .data; tampoco se inicializa ni repara una base existente al consultarla.
+Un comprobante inexistente devuelve not_found y no registra ninguna operación.
 [% else %]
 Conserve los documentos reales en journal/ y los exports en whatsapp/. Registre
 las tareas en open-loops.md, por ejemplo `- [ ] [2026-10-01] Entregar informe`.
@@ -3214,6 +3249,8 @@ class DomainContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 [% if kind == 'expenses' %]
+            self.assertEqual(handle(root, {"action": "summary"})["total"], 0)
+            self.assertFalse((root / ".data").exists())
             request = {"action": "record", "operation_id": "test-message-001", "currency": "COP", "expenses": [{"amount": 12000, "description": "Transporte", "expense_date": "2026-10-21"}]}
             receipt = handle(root, request)
             self.assertTrue(receipt["persisted"])
@@ -3221,6 +3258,7 @@ class DomainContract(unittest.TestCase):
             result = handle(root, {"action": "summary"})
             self.assertEqual(result["count"], 1)
             self.assertEqual(result["total"], 12000)
+            self.assertEqual(handle(root, {"action": "receipt", "operation_id": "test-message-001"})["record_ids"], receipt["record_ids"])
 [% else %]
             (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
             (root / "journal").mkdir()
@@ -4054,6 +4092,7 @@ def vector_store(
 """Bucle de decisión/acción/observación explícito y con límites verificables."""
 
 import json
+import math
 import time
 from collections.abc import Callable
 
@@ -4091,7 +4130,15 @@ def run_react(
 ) -> AgentResult:
     if not question.strip() or len(question) > 16000:
         raise ValueError("La pregunta debe tener entre 1 y 16000 caracteres.")
-    if max_steps < 1 or max_tool_calls < 1 or deadline_seconds <= 0:
+    if (
+        type(max_steps) is not int
+        or max_steps < 1
+        or type(max_tool_calls) is not int
+        or max_tool_calls < 1
+        or type(deadline_seconds) not in (int, float)
+        or not math.isfinite(deadline_seconds)
+        or deadline_seconds <= 0
+    ):
         raise ValueError("Los límites deben ser positivos.")
     registry = {t.name: t for t in tools}
     if len(registry) != len(tools):
@@ -4109,6 +4156,7 @@ def run_react(
     deadline = clock() + deadline_seconds
     calls = 0
     observations = []
+    seen_call_ids = set()
 
     def ensure_time() -> None:
         if clock() >= deadline:
@@ -4120,12 +4168,21 @@ def run_react(
         ensure_time()
         if not isinstance(response, AIMessage):
             raise ValueError("Respuesta de modelo no válida.")
+        if response.invalid_tool_calls:
+            raise ValueError("El modelo produjo una llamada de herramienta inválida.")
+        identifiers = [call["id"] for call in response.tool_calls]
+        if (
+            any(
+                not isinstance(value, str) or not value.strip() for value in identifiers
+            )
+            or len(set(identifiers)) != len(identifiers)
+            or seen_call_ids.intersection(identifiers)
+        ):
+            raise ValueError(
+                "Cada llamada requiere un identificador válido y único en la sesión."
+            )
         messages.append(response)
         if not response.tool_calls:
-            if response.invalid_tool_calls:
-                raise ValueError(
-                    "El modelo produjo una llamada de herramienta inválida."
-                )
             content = response.content
             answer = content if isinstance(content, str) else json.dumps(content)
             if not answer.strip():
@@ -4135,6 +4192,7 @@ def run_react(
             )
         if calls + len(response.tool_calls) > max_tool_calls:
             raise BudgetExceeded("Se agotó el presupuesto de herramientas.")
+        seen_call_ids.update(identifiers)
         for call in response.tool_calls:
             ensure_time()
             calls += 1  # También cuentan los intentos inválidos o denegados.
@@ -4319,7 +4377,7 @@ nombre ni garantiza su disponibilidad futura o los derechos sobre una marca.
 
 El entregable incluye fuente y wheel funcional, y el repositorio público
 `juliansantamaria0/agentcraft-forge`. Los ejemplos con OWNER explican cómo publicar
-una copia propia. Los comandos con `v0.2.2` requieren crear antes ese tag; para la
+una copia propia. Los comandos con `v0.2.3` requieren crear antes ese tag; para la
 versión actual puede instalarse desde `main`, con Git instalado.
 El comando PyPI solo funciona
 después de una publicación real. No se presenta una URL planeada como un paquete ya
@@ -4380,7 +4438,7 @@ python -m pip install uv==0.13.4
 uv sync --locked --all-extras --group dev
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
 agentcraft --version
 ```
 
@@ -4392,13 +4450,13 @@ usar `--force` como solución general a conflictos entre herramientas.
 #### Desde GitHub y PyPI, después de publicar
 
 ```console
-pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
+pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
 ```
 
 Con el extra del diseñador de IA:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
+pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
 ```
 
 La referencia fija un tag; para máxima precisión puede usarse un commit verificado.
@@ -4406,13 +4464,13 @@ Un repositorio privado requiere credenciales de Git del usuario. No incluya toke
 en la URL del comando. Una vez disponible en PyPI:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai]==0.2.2"
+pipx install --python 3.12 "agentcraft-forge[ai]==0.2.3"
 ```
 
 También es posible instalar en un venv administrado por el desarrollador:
 
 ```console
-python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.2"
+python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
 ```
 
 pipx ofrece el comando global en su directorio de ejecutables y aísla dependencias.
@@ -4500,9 +4558,9 @@ uv run --locked pytest
 uv build --no-sources
 uv run --locked twine check dist/*
 git add src/agentcraft_forge/__init__.py CHANGELOG.md uv.lock
-git commit -m "chore: release 0.2.2"
+git commit -m "chore: release 0.2.3"
 git push origin main
-gh workflow run publish.yml --ref main -f version=0.2.2
+gh workflow run publish.yml --ref main -f version=0.2.3
 gh run list --workflow publish.yml
 ```
 
@@ -4643,7 +4701,7 @@ site/
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.2 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.3 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -4703,6 +4761,10 @@ Un build fallido deja de habilitar ejecuciones con su comprobante anterior. Desp
 de una instalación interrumpida, repita `agentcraft build --project RUTA --install`.
 La inspección informa archivos Python añadidos en `src` y `tests`; sus huellas locales
 no sustituyen pruebas de comportamiento ni una firma de distribución.
+
+En 0.2.3, consultar gastos o comprobantes abre la base en modo de solo lectura;
+consultar un proyecto vacío no crea archivos de datos. El runtime ReAct comprueba
+llamadas mal formadas e identificadores antes de ejecutar cada lote de herramientas.
 
 #### Usarlo desde el mismo chat
 
@@ -5202,16 +5264,16 @@ if __name__ == "__main__":
 
 ## 6. Pruebas y evidencia reproducible
 
-### Evidencia de validación — 0.2.2
+### Evidencia de validación — 0.2.3
 
 Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 149 pruebas correctas |
+| pytest, red bloqueada por fixture | 170 pruebas correctas con todos los extras |
 | Cobertura de sentencias | 89 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
-| Black | 22 archivos de fuente, scripts y pruebas formateados |
+| Black | 23 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
 | Instalación del wheel con pipx | Correcta en un PIPX_HOME temporal, sin cambiar el PATH global del usuario |
 | Smoke del wheel fuera del checkout | Cinco tipos pasan init, build, inspect y run --dry-run; adaptador y dos pruebas de dominio correctos |
@@ -5220,7 +5282,7 @@ Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 | Reintentos y conflictos | Misma operación no duplica; argumentos distintos con el mismo ID se rechazan |
 | Auditoría de dominio | Tres candidatos con fuentes, progreso reciente revisado, aplicación con backup y reintento sin duplicados |
 | Pruebas incluidas en los proyectos generados | unittest de expenses y audit correctos en sus propios venvs |
-| CLI nueva contra proyecto 0.2.1 | Inspect y propuesta correctos; hashes del código, manifiesto y base de datos sin cambios |
+| Compatibilidad verificada en 0.2.2 contra proyecto 0.2.1 | Inspect y propuesta correctos; hashes del código, manifiesto y base de datos sin cambios |
 
 La batería prueba validación, menú interactivo, cancelación, generación de las cinco
 arquitecturas, recursos instalados, no sobrescritura, tratamiento del propósito como
@@ -5251,6 +5313,16 @@ el camino de instalación real se comprueba por separado desde el paquete instal
 Inspect también conserva su respuesta JSON ante Python inválido o una tabla project
 de tipo incorrecto en pyproject.toml.
 
+La versión 0.2.3 añade 21 casos: cinco de consultas de gastos sin escritura y dieciséis
+del runtime ReAct con modelo y herramientas simulados. Se verifica el rechazo del lote
+antes de cualquier herramienta ante llamadas mal formadas, IDs inválidos o presupuesto
+insuficiente, y que un ID reutilizado no repita la llamada en un turno posterior.
+Se comprueban denegaciones, plazo expirado y conservación de observaciones válidas.
+La cobertura indicada instrumenta fuente de la CLI y de los motores de dominio;
+la plantilla ReAct .tmpl se prueba por comportamiento y no figura en ese porcentaje.
+La consulta de comprobantes se prueba con otro escritor que mantiene cambios sin
+confirmar, y el resumen de una copia generada no crea una base al consultar sin datos.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -5267,7 +5339,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.2-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
@@ -6029,6 +6101,64 @@ def test_summary_uses_one_snapshot_when_another_writer_commits(tmp_path, monkeyp
     assert result["total"] == 12000
     assert result["categories"] == {"Transporte": 12000}
     assert handle(tmp_path, {"action": "summary"})["count"] == 2
+
+
+def test_empty_summary_does_not_create_persistent_state(tmp_path):
+    result = handle(tmp_path, {"action": "summary", "month": "2026-10"})
+    assert result["count"] == result["total"] == 0
+    assert result["monthly_budget"] is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_receipt_does_not_create_database(tmp_path):
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, {"action": "receipt", "operation_id": "missing-message-001"})
+    assert error.value.code == "not_found"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_read_queries_work_while_writer_holds_reserved_lock(tmp_path, monkeypatch):
+    first = handle(tmp_path, record())
+    original_connect = sqlite3.connect
+    writer = original_connect(tmp_path / ".data/expenses-v1.sqlite3")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE expenses SET amount = 999999")
+
+    def connect(*args, **kwargs):
+        kwargs["timeout"] = 0.01
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    try:
+        assert handle(tmp_path, {"action": "summary"})["total"] == 12000
+        replay = handle(tmp_path, {"action": "receipt", "operation_id": "message-0001"})
+        assert replay["record_ids"] == first["record_ids"]
+        assert replay["replayed"] is True
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_queries_do_not_repair_or_initialize_an_existing_empty_database(tmp_path):
+    directory = tmp_path / ".data"
+    directory.mkdir()
+    path = directory / "expenses-v1.sqlite3"
+    sqlite3.connect(path).close()
+    original = path.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError):
+        handle(tmp_path, {"action": "summary"})
+    assert path.read_bytes() == original
+
+
+def test_readonly_uri_preserves_spaces_unicode_and_uri_metacharacters(tmp_path):
+    root = tmp_path / "Prueba café #100%"
+    root.mkdir()
+    handle(root, record())
+    assert handle(root, {"action": "summary"})["count"] == 1
+    assert (
+        handle(root, {"action": "receipt", "operation_id": "message-0001"})["persisted"]
+        is True
+    )
 ````
 
 
@@ -6301,6 +6431,8 @@ def test_generated_runtime_persists_across_processes(tmp_path):
         )
         return json.loads(result.stdout)
 
+    assert invoke({"action": "summary"})["total"] == 0
+    assert not (target / ".data").exists()
     request = {
         "action": "record",
         "operation_id": "message-unicode-001",
@@ -6656,6 +6788,162 @@ def test_inspect_reports_invalid_project_table_as_json(project):
 ````
 
 
+### `tests/test_react_runtime.py`
+
+````python
+import runpy
+from importlib.resources import files
+from types import SimpleNamespace
+
+import pytest
+
+
+@pytest.fixture
+def runtime():
+    pytest.importorskip(
+        "langchain_core",
+        reason="Estas pruebas requieren el extra ai; CI instala todos los extras.",
+    )
+    path = files("agentcraft_forge").joinpath("templates/runtime/react.py.tmpl")
+    return SimpleNamespace(**runpy.run_path(str(path)))
+
+
+class Model:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.messages = []
+
+    def bind_tools(self, tools):
+        return self
+
+    def invoke(self, messages):
+        self.messages.append(list(messages))
+        return next(self.responses)
+
+
+class Tool:
+    name = "lookup"
+
+    def __init__(self):
+        self.calls = []
+
+    def invoke(self, args):
+        self.calls.append(args)
+        return "Resultado de prueba"
+
+
+def call(identifier="call-1", name="lookup"):
+    return {"id": identifier, "name": name, "args": {}}
+
+
+def test_mixed_valid_and_invalid_calls_are_rejected_before_tools(runtime):
+    response = runtime.AIMessage(
+        content="",
+        tool_calls=[call()],
+        invalid_tool_calls=[
+            {
+                "id": "call-bad",
+                "name": "lookup",
+                "args": "{",
+                "error": "invalid JSON",
+            }
+        ],
+    )
+    tool = Tool()
+    with pytest.raises(ValueError, match="inválida"):
+        runtime.run_react(Model([response]), [tool], "Consulta de prueba")
+    assert tool.calls == []
+
+
+@pytest.mark.parametrize("ids", [[None], [""], [" "], ["call-1", "call-1"]])
+def test_bad_or_duplicate_ids_never_execute_current_batch(runtime, ids):
+    response = runtime.AIMessage(content="", tool_calls=[call(value) for value in ids])
+    tool = Tool()
+    with pytest.raises(ValueError, match="identificador"):
+        runtime.run_react(Model([response]), [tool], "Consulta de prueba")
+    assert tool.calls == []
+
+
+def test_reused_id_in_later_turn_does_not_repeat_tool(runtime):
+    response = runtime.AIMessage(content="", tool_calls=[call()])
+    tool = Tool()
+    with pytest.raises(ValueError, match="identificador"):
+        runtime.run_react(Model([response, response]), [tool], "Consulta de prueba")
+    assert len(tool.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"max_steps": True},
+        {"max_steps": 1.5},
+        {"max_tool_calls": True},
+        {"deadline_seconds": float("nan")},
+        {"deadline_seconds": float("inf")},
+        {"deadline_seconds": True},
+    ],
+)
+def test_invalid_budgets_fail_before_model_call(runtime, limits):
+    model = Model([])
+    with pytest.raises(ValueError):
+        runtime.run_react(model, [Tool()], "Consulta de prueba", **limits)
+    assert model.messages == []
+
+
+def test_valid_calls_keep_observations_and_matching_ids(runtime):
+    tool = Tool()
+    model = Model(
+        [
+            runtime.AIMessage(content="", tool_calls=[call()]),
+            runtime.AIMessage(content="Respuesta"),
+        ]
+    )
+    result = runtime.run_react(model, [tool], "Consulta de prueba")
+    assert result.tool_calls == 1
+    assert result.observations == [{"tool": "lookup", "result": "Resultado de prueba"}]
+    assert model.messages[1][-1].tool_call_id == "call-1"
+
+
+def test_oversized_batch_cannot_partially_spend_tool_budget(runtime):
+    tool = Tool()
+    response = runtime.AIMessage(content="", tool_calls=[call("one"), call("two")])
+    with pytest.raises(runtime.BudgetExceeded):
+        runtime.run_react(
+            Model([response]), [tool], "Consulta de prueba", max_tool_calls=1
+        )
+    assert tool.calls == []
+
+
+def test_unapproved_tool_is_denied_and_counts_against_budget(runtime):
+    tool = Tool()
+    model = Model(
+        [
+            runtime.AIMessage(content="", tool_calls=[call(name="shell")]),
+            runtime.AIMessage(content="Herramienta no disponible"),
+        ]
+    )
+    result = runtime.run_react(model, [tool], "Consulta de prueba")
+    assert tool.calls == []
+    assert result.tool_calls == 1
+    assert result.observations == [{"tool": "shell", "error": "tool_not_allowed"}]
+
+
+def test_expired_deadline_after_model_prevents_tools(runtime):
+    tool = Tool()
+    ticks = iter([0.0, 0.0, 2.0])
+    model = Model([runtime.AIMessage(content="", tool_calls=[call()])])
+    with pytest.raises(runtime.BudgetExceeded):
+        runtime.run_react(
+            model,
+            [tool],
+            "Consulta de prueba",
+            deadline_seconds=1,
+            clock=lambda: next(ticks),
+        )
+    assert tool.calls == []
+````
+
+
 ## 7. Seguridad, licencia y mantenimiento
 
 ### Seguridad
@@ -6690,6 +6978,19 @@ pruebe restauración y gestione locks residuales antes de usarlas como servicio.
 
 
 ### Changelog
+
+#### 0.2.3 — 2026-10-21
+
+- Summary y receipt consultan SQLite mediante URI de solo lectura y un snapshot.
+  Consultar un proyecto sin datos no crea .data; un comprobante ausente tampoco.
+- Las consultas no inicializan ni reparan bases existentes y no solicitan el lock
+  de escritura para leer comprobantes. Rutas con espacios, Unicode, # y % verificadas.
+- ReAct valida cada respuesta completa antes de ejecutar su lote: rechaza llamadas
+  mal formadas e identificadores ausentes, vacíos o repetidos dentro de la sesión.
+- Los presupuestos ReAct exigen contadores enteros y tiempo positivo finito; la
+  validación ocurre antes de invocar el modelo. Se conservan denegaciones y límites.
+- Pruebas sin modelos ni APIs reales para el runtime ReAct, lecturas concurrentes y
+  copias generadas. El proyecto de gastos incluye su prueba de consulta sin escritura.
 
 #### 0.2.2 — 2026-10-21
 
