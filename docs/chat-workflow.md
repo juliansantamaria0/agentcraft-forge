@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.0
+# Operación por chat y comprobantes — 0.2.1
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -114,10 +114,25 @@ asistente debe ejecutarla y usar los datos nuevos. La comprensión incorporada e
 conservadora: negaciones, devoluciones, planes futuros y fechas contradictorias piden
 aclaración. La interpretación más amplia del asistente no elimina la validación JSON.
 
+Desde 0.2.1, `resumen de ayer` consulta ese día; `resumen del mes pasado` respeta
+el cambio de año y `resumen de septiembre de 2025` conserva el mes y año indicados.
+`Presupuesto de $2.500.000 para 2026-11` propone noviembre de 2026. Un mes nombrado
+sin año, varios periodos o una semana/rango requieren aclaración. El presupuesto
+es mensual; no se transforma un día indicado por el usuario en un presupuesto de mes.
+Sin periodo se mantiene el mes actual, salvo la consulta de todo el historial.
+
+Una petición que mezcla registrar y consultar se debe separar. En un lote con varios
+importes no se descartan las cláusulas sin precio: se solicita completar los datos.
+Estas reglas no sustituyen la interpretación del chat ni cubren todo el lenguaje natural.
+Las solicitudes y los exports JSON rechazan claves duplicadas y valores NaN/Infinity.
+Un error de formato detectado antes de ejecutar el motor devuelve persisted=false.
+
 Los totales y categorías abarcan todo el período. La lista de movimientos está paginada:
 limit=100 por defecto, máximo 1000, y offset=0. has_more indica si faltan páginas.
 Los comprobantes conservan los registros de su operación y totales compactos; no
 duplican todo el historial del mes con cada escritura.
+Los componentes de cada resumen se leen desde el mismo snapshot SQLite, aunque otro
+proceso registre un gasto durante la consulta. Una consulta posterior refleja ese gasto.
 
 ## Reintentos, correcciones y estado incierto
 
@@ -173,6 +188,9 @@ fecha de fuente y vencimiento propuesto. Los encargos de terceros son peticiones
 aceptación sin confirmar; no se convierten en promesas aceptadas por defecto.
 Un avance reciente relacionado evita presentar el loop como simplemente estancado y
 se marca para revisión. Las coincidencias con tareas cerradas se muestran, no se ocultan.
+Las negaciones, preguntas y expresiones futuras reconocidas por las reglas no cuentan
+como progreso. Una frase ambigua puede necesitar revisión manual; el motor no prueba
+comprensión semántica completa ni marca automáticamente un compromiso como terminado.
 
 Scan guarda su informe local, pero persisted=false indica que no modificó el registro
 canónico. Fuentes ausentes o sin fecha producen incomplete. La ausencia de candidatos

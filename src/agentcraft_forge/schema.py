@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Kind(StrEnum):
@@ -57,3 +57,16 @@ class AgentSpec(BaseModel):
     plan: Plan
     max_steps: int = Field(default=12, ge=2, le=60)
     max_tool_calls: int = Field(default=4, ge=1, le=20)
+
+    @field_validator("name")
+    @classmethod
+    def portable_name(cls, value: str) -> str:
+        reserved = {"con", "prn", "aux", "nul"}
+        reserved.update(
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        )
+        if value in reserved:
+            raise ValueError(
+                "Nombre reservado del sistema; elija un nombre portable como mi-agente."
+            )
+        return value

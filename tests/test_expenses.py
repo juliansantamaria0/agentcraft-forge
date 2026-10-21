@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import date
 
 import pytest
@@ -219,3 +220,93 @@ def test_summary_pagination_does_not_change_authoritative_totals(tmp_path):
     assert page["returned_count"] == 1
     assert page["has_more"]
     assert page["categories"]["Transporte"] == 36000
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("resumen de ayer", {"date": "2026-10-20"}),
+        ("resumen del 20/09/2026", {"date": "2026-09-20"}),
+        ("resumen de 2026-09", {"month": "2026-09"}),
+        ("resumen de septiembre de 2025", {"month": "2025-09"}),
+        ("resumen del mes pasado", {"month": "2026-09"}),
+        ("todos mis gastos de anteayer en resumen", {"date": "2026-10-19"}),
+    ],
+)
+def test_summary_preserves_requested_period(message, expected):
+    assert propose(message, TODAY)["request"] == {"action": "summary", **expected}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "resumen de la semana pasada",
+        "resumen de noviembre",
+        "resumen del 31/02/2026",
+        "resumen de ayer y hoy",
+        "resumen entre 2026-09-01 y 2026-09-30",
+        "Gasté $12.000 en taxi y dame un resumen",
+        "Gasté $12.000 en taxi y $20.000 en almuerzo y café",
+        "Gasté $12.000 en taxi; café",
+    ],
+)
+def test_unsupported_periods_and_partial_or_mixed_requests_need_clarification(message):
+    result = propose(message, TODAY)
+    assert result["status"] == "needs_clarification"
+    assert result["persisted"] is False
+    assert "request" not in result
+
+
+@pytest.mark.parametrize(
+    "period,expected",
+    [
+        ("2026-11", "2026-11"),
+        ("noviembre de 2027", "2027-11"),
+        ("mes pasado", "2026-09"),
+    ],
+)
+def test_budget_never_silently_uses_another_month(period, expected):
+    result = propose(f"Presupuesto de $2.500.000 para {period}", TODAY)
+    assert result["request"]["month"] == expected
+    assert result["request"]["amount"] == 2500000
+
+
+@pytest.mark.parametrize("period", ["noviembre", "hoy", "2026-13", "2026-11 y 2026-12"])
+def test_ambiguous_budget_period_never_becomes_a_write_proposal(period):
+    assert (
+        propose(f"Presupuesto $2.500.000 para {period}", TODAY)["status"]
+        == "needs_clarification"
+    )
+
+
+def test_relative_month_handles_year_boundary():
+    result = propose("resumen del mes pasado", date(2026, 1, 2))
+    assert result["request"]["month"] == "2025-12"
+
+
+def test_summary_uses_one_snapshot_when_another_writer_commits(tmp_path, monkeypatch):
+    handle(tmp_path, record())
+    original_connect = sqlite3.connect
+    connection = original_connect(tmp_path / ".data/expenses-v1.sqlite3")
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.close()
+    inserted = False
+
+    def interleave(statement):
+        nonlocal inserted
+        if "SELECT COUNT(*)" in statement and not inserted:
+            inserted = True
+            handle(tmp_path, record("concurrent-message-002"))
+
+    def connect(*args, **kwargs):
+        result = original_connect(*args, **kwargs)
+        result.set_trace_callback(interleave)
+        return result
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    result = handle(tmp_path, {"action": "summary"})
+    assert inserted
+    assert result["returned_count"] == result["count"] == 1
+    assert result["total"] == 12000
+    assert result["categories"] == {"Transporte": 12000}
+    assert handle(tmp_path, {"action": "summary"})["count"] == 2

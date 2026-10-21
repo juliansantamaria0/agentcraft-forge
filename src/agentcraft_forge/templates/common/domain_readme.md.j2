@@ -33,6 +33,13 @@ herramientas. No se inventa un presupuesto inicial ni se etiqueta un gasto como
 innecesario. Cada lote y su comprobante se confirman en una transacción SQLite.
 El comprobante refleja el estado al registrar la operación; una consulta nueva
 refleja el estado actual. No hay conversión de monedas ni conexión con cuentas.
+
+Las propuestas admiten `resumen de ayer`, `resumen del mes pasado` y meses como
+`septiembre de 2025` o `2025-09`. Un presupuesto conserva el mes solicitado;
+los meses nombrados necesitan año. Rangos, semanas, fechas contradictorias o una
+petición que mezcle registro y resumen requieren aclaración.
+En lotes con varios importes, los conceptos sin precio no se descartan.
+Los resúmenes se leen en un único snapshot SQLite incluso con otro escritor activo.
 [% else %]
 Conserve los documentos reales en journal/ y los exports en whatsapp/. Registre
 las tareas en open-loops.md, por ejemplo `- [ ] [2026-10-01] Entregar informe`.
@@ -54,6 +61,7 @@ fuentes cambiadas y posibles duplicados. Un lock evita dos aplicaciones concurre
 si un proceso se interrumpe, compruebe que terminó antes de retirar un lock residual.
 Las actualizaciones recientes detectadas se presentan para revisión; las heurísticas
 no demuestran que una tarea se haya completado ni que todas las promesas se detecten.
+Las negaciones, preguntas e intenciones futuras reconocidas no cuentan como progreso.
 [% endif %]
 
 ## Uso desde el chat
@@ -62,6 +70,9 @@ La habilidad local está en `.agents/skills/agentcraft-project/SKILL.md`.
 La compatibilidad de descubrimiento depende del asistente; puede adjuntar ese archivo
 como instrucciones si su cliente no descubre habilidades. No es un bot de WhatsApp.
 No comparta el directorio .data ni los recibos con datos personales en GitHub.
+Se rechazan solicitudes JSON con claves repetidas, NaN o Infinity antes de ejecutar
+el motor. En sesión interactiva, un mensaje no válido permite continuar la conversación.
+Actualizar AgentCraft no modifica automáticamente el código de este proyecto generado.
 
 ## Pruebas
 

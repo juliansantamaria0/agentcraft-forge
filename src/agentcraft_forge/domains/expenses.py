@@ -206,6 +206,8 @@ def handle(root: Path, request: object) -> dict:
         connection.executescript(SCHEMA)
         action = request["action"]
         if action == "summary":
+            # Todas las consultas del resumen deben compartir el mismo snapshot.
+            connection.execute("BEGIN")
             return summary(connection, request)
         identifier = request["operation_id"]
         connection.execute("BEGIN IMMEDIATE")
@@ -325,6 +327,88 @@ MONEY = re.compile(
     re.IGNORECASE,
 )
 DATES = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+MONTH_DATES = re.compile(r"\b\d{4}-\d{2}\b")
+MONTH_NAMES = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
+
+def proposal_period(message: str, today: date) -> tuple[dict, str]:
+    """Resuelve solo periodos soportados y devuelve el texto sin sus cifras."""
+    lower = normalize(message)
+    if re.search(
+        r"\b(?:semana\w*|quincena\w*|ano\w*|entre|desde|hasta|rango)\b", lower
+    ):
+        raise DomainError(
+            "ambiguous_period",
+            "Indique un día o mes concreto; no se admiten rangos, semanas ni años completos.",
+        )
+    days, months = set(), set()
+    for token in DATES.findall(lower):
+        try:
+            if "-" in token:
+                value = date.fromisoformat(token)
+            else:
+                day_part, month_part, year_part = token.split("/")
+                year = int(year_part) + (2000 if len(year_part) == 2 else 0)
+                value = date(year, int(month_part), int(day_part))
+        except ValueError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha indicada no es válida."
+            ) from exc
+        days.add(value.isoformat())
+    remainder = DATES.sub(" ", lower)
+    for token in MONTH_DATES.findall(remainder):
+        months.add(month(token))
+    remainder = MONTH_DATES.sub(" ", remainder)
+    named = re.compile(r"\b(" + "|".join(MONTH_NAMES) + r")(?:\s+(?:de\s+)?(\d{4}))?\b")
+    for match in named.finditer(remainder):
+        if not match[2]:
+            raise DomainError(
+                "ambiguous_period",
+                "Indique también el año del mes solicitado, por ejemplo noviembre de 2026.",
+            )
+        months.add(month(f"{match[2]}-{MONTH_NAMES.index(match[1]) + 1:02d}"))
+    remainder = named.sub(" ", remainder)
+    for word, offset in (("hoy", 0), ("ayer", 1), ("anteayer", 2)):
+        if re.search(rf"\b{word}\b", remainder):
+            days.add((today - timedelta(days=offset)).isoformat())
+    if re.search(r"\bdiario\b", remainder) and not days:
+        days.add(today.isoformat())
+    for pattern, offset in (
+        (r"\b(?:este mes|mes actual)\b", 0),
+        (r"\bmes (?:pasado|anterior)\b", -1),
+        (r"\b(?:mes (?:proximo|siguiente)|proximo mes)\b", 1),
+    ):
+        if re.search(pattern, remainder):
+            ordinal = today.year * 12 + today.month - 1 + offset
+            year, zero_month = divmod(ordinal, 12)
+            months.add(month(f"{year:04d}-{zero_month + 1:02d}"))
+    if (
+        len(days) > 1
+        or len(months) > 1
+        or (days and months and next(iter(days))[:7] not in months)
+    ):
+        raise DomainError(
+            "ambiguous_period",
+            "Hay varios periodos; separe las solicitudes para confirmar su asociación.",
+        )
+    if days:
+        return {"date": next(iter(days))}, remainder
+    if months:
+        return {"month": next(iter(months))}, remainder
+    return {}, remainder
 
 
 def amount(token: str) -> int | None:
@@ -368,14 +452,28 @@ def propose(message: str, reference_date: date | None = None) -> dict:
     summary_intent = any(
         get_close_matches(word, ["resumen"], n=1, cutoff=0.72) for word in words
     )
-    if summary_intent or any(
+    summary_intent = summary_intent or any(
         term in lower for term in ("cuanto me queda", "saldo restante")
-    ):
+    )
+    if summary_intent or "presupuesto" in words:
+        try:
+            period, without_period = proposal_period(message, today)
+        except DomainError as exc:
+            return {**unclear, "reason": str(exc)}
+    if summary_intent:
+        if re.search(r"\b(?:gaste|pague|compre|registra\w*|anota\w*)\b", lower) or any(
+            amount(match.group()) is not None
+            for match in MONEY.finditer(without_period)
+        ):
+            return {
+                **unclear,
+                "reason": "Separe el registro de gastos y la consulta de resumen; no se omitió ni registró ninguna compra.",
+            }
         request = {"action": "summary"}
-        if "todos" in words or "historial" in words:
+        if period:
+            request.update(period)
+        elif "todos" in words or "historial" in words:
             pass
-        elif "hoy" in words or "diario" in words:
-            request["date"] = today.isoformat()
         else:
             request["month"] = today.strftime("%Y-%m")
         return {
@@ -394,7 +492,9 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         }
     if re.search(r"\b(?:usd|eur|dolares?|euros?)\b|[€£]|-\s*\$?\s*\d", lower):
         # El signo de fecha ISO no representa un importe negativo.
-        without_dates = DATES.sub(" ", lower)
+        without_dates = (
+            without_period if "presupuesto" in words else DATES.sub(" ", lower)
+        )
         if re.search(
             r"\b(?:usd|eur|dolares?|euros?)\b|[€£]|-\s*\$?\s*\d", without_dates
         ):
@@ -403,9 +503,15 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 "reason": "Se admiten gastos positivos en COP; no se realiza conversión de moneda.",
             }
     if "presupuesto" in words:
+        if "date" in period:
+            return {
+                **unclear,
+                "reason": "El presupuesto es mensual; indique el mes y el año, no un día.",
+            }
+        budget_month = period.get("month", today.strftime("%Y-%m"))
         values = [
             value
-            for match in MONEY.finditer(DATES.sub(" ", message))
+            for match in MONEY.finditer(without_period)
             if (value := amount(match.group())) is not None
         ]
         if not values:
@@ -413,7 +519,7 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 "status": "proposal",
                 "persisted": False,
                 "model_invoked": False,
-                "request": {"action": "summary", "month": today.strftime("%Y-%m")},
+                "request": {"action": "summary", "month": budget_month},
             }
         if len(values) != 1:
             return {
@@ -427,11 +533,11 @@ def propose(message: str, reference_date: date | None = None) -> dict:
             "request": {
                 "action": "set_budget",
                 "currency": "COP",
-                "month": today.strftime("%Y-%m"),
+                "month": budget_month,
                 "amount": values[0],
             },
             "assumptions": [
-                "Mes actual; confirme otro mes mediante la solicitud JSON si corresponde."
+                f"Presupuesto mensual en COP para {budget_month}; añadir un operation_id único y estable antes de ejecutar."
             ],
         }
     explicit_dates = set()
@@ -467,9 +573,18 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         if any(amount(match.group()) is not None for match in MONEY.finditer(part))
     ]
     if len(priced) <= 1:
+        if len(clauses) > 1 and re.search(r"[;\n]", clean):
+            return {
+                **unclear,
+                "reason": "Cada gasto separado debe incluir su importe; no se omitirán conceptos sin precio.",
+            }
         clauses = [clean]
     else:
-        clauses = priced
+        if len(priced) != len(clauses):
+            return {
+                **unclear,
+                "reason": "Cada gasto separado debe incluir su importe; no se omitirán conceptos sin precio.",
+            }
     items = []
     for clause in clauses:
         matches = [(match, amount(match.group())) for match in MONEY.finditer(clause)]

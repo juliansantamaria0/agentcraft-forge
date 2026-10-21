@@ -16,6 +16,33 @@ class DomainError(ValueError):
         super().__init__(message)
 
 
+def parse_json(content: str) -> object:
+    """Las claves repetidas y los valores no JSON no pueden decidir una escritura."""
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise DomainError("invalid_json", "El JSON contiene claves repetidas.")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise DomainError("invalid_json", "El JSON no admite NaN ni Infinity.")
+
+    try:
+        return json.loads(
+            content, object_pairs_hook=unique_object, parse_constant=invalid_constant
+        )
+    except DomainError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise DomainError(
+            "invalid_json",
+            "La solicitud debe contener JSON válido y sin anidación excesiva.",
+        ) from exc
+
+
 def canonical(value: object) -> str:
     return json.dumps(
         value,

@@ -7,7 +7,11 @@ from datetime import date
 from pathlib import Path
 
 from agent_app.domain import handle, propose
-from agent_app.domain_common import DomainError
+from agent_app.domain_common import DomainError, parse_json
+
+
+def report_error(exc):
+    print(json.dumps({"status": "error", "persisted": None if exc.code in {"verification_failed", "operation_unconfirmed"} else False, "code": exc.code, "message": str(exc)}, ensure_ascii=False))
 
 
 def main(argv=None):
@@ -25,7 +29,7 @@ def main(argv=None):
         if args.request:
             if args.request.is_symlink() or args.request.stat().st_size > 64_000:
                 raise DomainError("invalid_request", "Solicitud enlazada o superior a 64 KB.")
-            result = handle(root, json.loads(args.request.read_text(encoding="utf-8-sig")))
+            result = handle(root, parse_json(args.request.read_text(encoding="utf-8-sig")))
             print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
             return 0
         if args.message is not None:
@@ -40,9 +44,12 @@ def main(argv=None):
             if message.casefold() in {"salir", "exit", "quit"}:
                 return 0
             if message:
-                print(json.dumps(propose(message), ensure_ascii=False, indent=2))
+                try:
+                    print(json.dumps(propose(message), ensure_ascii=False, indent=2))
+                except DomainError as exc:
+                    report_error(exc)
     except DomainError as exc:
-        print(json.dumps({"status": "error", "persisted": None if exc.code in {"verification_failed", "operation_unconfirmed"} else False, "code": exc.code, "message": str(exc)}, ensure_ascii=False))
+        report_error(exc)
         return 1
     except (OSError, ValueError, sqlite3.Error) as exc:
         print(json.dumps({"status": "error", "persisted": None, "code": type(exc).__name__, "message": "No se pudo confirmar el estado. Revise o reintente con el mismo operation_id."}))

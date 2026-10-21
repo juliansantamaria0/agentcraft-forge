@@ -9,6 +9,7 @@ import tomllib
 import venv
 from pathlib import Path
 
+from agentcraft_forge.domains.common import parse_json
 from agentcraft_forge.generator import render
 from agentcraft_forge.schema import AgentSpec
 
@@ -157,7 +158,7 @@ def run_request(root: Path, request: Path) -> int:
     request = request.absolute()
     if request.is_symlink() or not request.is_file() or request.stat().st_size > 64_000:
         raise ValueError("La solicitud debe ser un archivo JSON local de hasta 64 KB.")
-    json.loads(request.read_text(encoding="utf-8-sig"))
+    parse_json(request.read_text(encoding="utf-8-sig"))
     python = interpreter(root)
     if not python.is_file():
         raise ValueError("Ejecute build --install para preparar el runtime.")

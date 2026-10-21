@@ -1,8 +1,8 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
-**Guía técnica y código completo · Versión 0.2.0 · 21 de octubre de 2026**
+**Guía técnica y código completo · Versión 0.2.1 · 21 de octubre de 2026**
 
-El entregable contiene una CLI funcional, recursos internos y tres arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
+El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
 
 El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructurada. Ambos generan un plan validado y plantillas conocidas. La publicación GitHub/PyPI se documenta y automatiza, pero requiere identidad y configuración del mantenedor.
 
@@ -10,7 +10,7 @@ El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructu
 
 ## Uso desde el chat, gastos y compromisos en 0.2
 
-### Operación por chat y comprobantes — 0.2.0
+### Operación por chat y comprobantes — 0.2.1
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -126,10 +126,25 @@ asistente debe ejecutarla y usar los datos nuevos. La comprensión incorporada e
 conservadora: negaciones, devoluciones, planes futuros y fechas contradictorias piden
 aclaración. La interpretación más amplia del asistente no elimina la validación JSON.
 
+Desde 0.2.1, `resumen de ayer` consulta ese día; `resumen del mes pasado` respeta
+el cambio de año y `resumen de septiembre de 2025` conserva el mes y año indicados.
+`Presupuesto de $2.500.000 para 2026-11` propone noviembre de 2026. Un mes nombrado
+sin año, varios periodos o una semana/rango requieren aclaración. El presupuesto
+es mensual; no se transforma un día indicado por el usuario en un presupuesto de mes.
+Sin periodo se mantiene el mes actual, salvo la consulta de todo el historial.
+
+Una petición que mezcla registrar y consultar se debe separar. En un lote con varios
+importes no se descartan las cláusulas sin precio: se solicita completar los datos.
+Estas reglas no sustituyen la interpretación del chat ni cubren todo el lenguaje natural.
+Las solicitudes y los exports JSON rechazan claves duplicadas y valores NaN/Infinity.
+Un error de formato detectado antes de ejecutar el motor devuelve persisted=false.
+
 Los totales y categorías abarcan todo el período. La lista de movimientos está paginada:
 limit=100 por defecto, máximo 1000, y offset=0. has_more indica si faltan páginas.
 Los comprobantes conservan los registros de su operación y totales compactos; no
 duplican todo el historial del mes con cada escritura.
+Los componentes de cada resumen se leen desde el mismo snapshot SQLite, aunque otro
+proceso registre un gasto durante la consulta. Una consulta posterior refleja ese gasto.
 
 #### Reintentos, correcciones y estado incierto
 
@@ -185,6 +200,9 @@ fecha de fuente y vencimiento propuesto. Los encargos de terceros son peticiones
 aceptación sin confirmar; no se convierten en promesas aceptadas por defecto.
 Un avance reciente relacionado evita presentar el loop como simplemente estancado y
 se marca para revisión. Las coincidencias con tareas cerradas se muestran, no se ocultan.
+Las negaciones, preguntas y expresiones futuras reconocidas por las reglas no cuentan
+como progreso. Una frase ambigua puede necesitar revisión manual; el motor no prueba
+comprensión semántica completa ni marca automáticamente un compromiso como terminado.
 
 Scan guarda su informe local, pero persisted=false indica que no modificó el registro
 canónico. Fuentes ausentes o sin fecha producen incomplete. La ausencia de candidatos
@@ -341,7 +359,7 @@ No se habilita shell ni escritura remota de forma predeterminada.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Kind(StrEnum):
@@ -396,6 +414,19 @@ class AgentSpec(BaseModel):
     plan: Plan
     max_steps: int = Field(default=12, ge=2, le=60)
     max_tool_calls: int = Field(default=4, ge=1, le=20)
+
+    @field_validator("name")
+    @classmethod
+    def portable_name(cls, value: str) -> str:
+        reserved = {"con", "prn", "aux", "nul"}
+        reserved.update(
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        )
+        if value in reserved:
+            raise ValueError(
+                "Nombre reservado del sistema; elija un nombre portable como mi-agente."
+            )
+        return value
 ````
 
 
@@ -1097,6 +1128,7 @@ import tomllib
 import venv
 from pathlib import Path
 
+from agentcraft_forge.domains.common import parse_json
 from agentcraft_forge.generator import render
 from agentcraft_forge.schema import AgentSpec
 
@@ -1245,7 +1277,7 @@ def run_request(root: Path, request: Path) -> int:
     request = request.absolute()
     if request.is_symlink() or not request.is_file() or request.stat().st_size > 64_000:
         raise ValueError("La solicitud debe ser un archivo JSON local de hasta 64 KB.")
-    json.loads(request.read_text(encoding="utf-8-sig"))
+    parse_json(request.read_text(encoding="utf-8-sig"))
     python = interpreter(root)
     if not python.is_file():
         raise ValueError("Ejecute build --install para preparar el runtime.")
@@ -1415,7 +1447,7 @@ app()
 ````python
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 ````
 
 
@@ -1445,6 +1477,33 @@ class DomainError(ValueError):
     def __init__(self, code: str, message: str):
         self.code = code
         super().__init__(message)
+
+
+def parse_json(content: str) -> object:
+    """Las claves repetidas y los valores no JSON no pueden decidir una escritura."""
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise DomainError("invalid_json", "El JSON contiene claves repetidas.")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise DomainError("invalid_json", "El JSON no admite NaN ni Infinity.")
+
+    try:
+        return json.loads(
+            content, object_pairs_hook=unique_object, parse_constant=invalid_constant
+        )
+    except DomainError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise DomainError(
+            "invalid_json",
+            "La solicitud debe contener JSON válido y sin anidación excesiva.",
+        ) from exc
 
 
 def canonical(value: object) -> str:
@@ -1774,6 +1833,8 @@ def handle(root: Path, request: object) -> dict:
         connection.executescript(SCHEMA)
         action = request["action"]
         if action == "summary":
+            # Todas las consultas del resumen deben compartir el mismo snapshot.
+            connection.execute("BEGIN")
             return summary(connection, request)
         identifier = request["operation_id"]
         connection.execute("BEGIN IMMEDIATE")
@@ -1893,6 +1954,88 @@ MONEY = re.compile(
     re.IGNORECASE,
 )
 DATES = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+MONTH_DATES = re.compile(r"\b\d{4}-\d{2}\b")
+MONTH_NAMES = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
+
+def proposal_period(message: str, today: date) -> tuple[dict, str]:
+    """Resuelve solo periodos soportados y devuelve el texto sin sus cifras."""
+    lower = normalize(message)
+    if re.search(
+        r"\b(?:semana\w*|quincena\w*|ano\w*|entre|desde|hasta|rango)\b", lower
+    ):
+        raise DomainError(
+            "ambiguous_period",
+            "Indique un día o mes concreto; no se admiten rangos, semanas ni años completos.",
+        )
+    days, months = set(), set()
+    for token in DATES.findall(lower):
+        try:
+            if "-" in token:
+                value = date.fromisoformat(token)
+            else:
+                day_part, month_part, year_part = token.split("/")
+                year = int(year_part) + (2000 if len(year_part) == 2 else 0)
+                value = date(year, int(month_part), int(day_part))
+        except ValueError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha indicada no es válida."
+            ) from exc
+        days.add(value.isoformat())
+    remainder = DATES.sub(" ", lower)
+    for token in MONTH_DATES.findall(remainder):
+        months.add(month(token))
+    remainder = MONTH_DATES.sub(" ", remainder)
+    named = re.compile(r"\b(" + "|".join(MONTH_NAMES) + r")(?:\s+(?:de\s+)?(\d{4}))?\b")
+    for match in named.finditer(remainder):
+        if not match[2]:
+            raise DomainError(
+                "ambiguous_period",
+                "Indique también el año del mes solicitado, por ejemplo noviembre de 2026.",
+            )
+        months.add(month(f"{match[2]}-{MONTH_NAMES.index(match[1]) + 1:02d}"))
+    remainder = named.sub(" ", remainder)
+    for word, offset in (("hoy", 0), ("ayer", 1), ("anteayer", 2)):
+        if re.search(rf"\b{word}\b", remainder):
+            days.add((today - timedelta(days=offset)).isoformat())
+    if re.search(r"\bdiario\b", remainder) and not days:
+        days.add(today.isoformat())
+    for pattern, offset in (
+        (r"\b(?:este mes|mes actual)\b", 0),
+        (r"\bmes (?:pasado|anterior)\b", -1),
+        (r"\b(?:mes (?:proximo|siguiente)|proximo mes)\b", 1),
+    ):
+        if re.search(pattern, remainder):
+            ordinal = today.year * 12 + today.month - 1 + offset
+            year, zero_month = divmod(ordinal, 12)
+            months.add(month(f"{year:04d}-{zero_month + 1:02d}"))
+    if (
+        len(days) > 1
+        or len(months) > 1
+        or (days and months and next(iter(days))[:7] not in months)
+    ):
+        raise DomainError(
+            "ambiguous_period",
+            "Hay varios periodos; separe las solicitudes para confirmar su asociación.",
+        )
+    if days:
+        return {"date": next(iter(days))}, remainder
+    if months:
+        return {"month": next(iter(months))}, remainder
+    return {}, remainder
 
 
 def amount(token: str) -> int | None:
@@ -1936,14 +2079,28 @@ def propose(message: str, reference_date: date | None = None) -> dict:
     summary_intent = any(
         get_close_matches(word, ["resumen"], n=1, cutoff=0.72) for word in words
     )
-    if summary_intent or any(
+    summary_intent = summary_intent or any(
         term in lower for term in ("cuanto me queda", "saldo restante")
-    ):
+    )
+    if summary_intent or "presupuesto" in words:
+        try:
+            period, without_period = proposal_period(message, today)
+        except DomainError as exc:
+            return {**unclear, "reason": str(exc)}
+    if summary_intent:
+        if re.search(r"\b(?:gaste|pague|compre|registra\w*|anota\w*)\b", lower) or any(
+            amount(match.group()) is not None
+            for match in MONEY.finditer(without_period)
+        ):
+            return {
+                **unclear,
+                "reason": "Separe el registro de gastos y la consulta de resumen; no se omitió ni registró ninguna compra.",
+            }
         request = {"action": "summary"}
-        if "todos" in words or "historial" in words:
+        if period:
+            request.update(period)
+        elif "todos" in words or "historial" in words:
             pass
-        elif "hoy" in words or "diario" in words:
-            request["date"] = today.isoformat()
         else:
             request["month"] = today.strftime("%Y-%m")
         return {
@@ -1962,7 +2119,9 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         }
     if re.search(r"\b(?:usd|eur|dolares?|euros?)\b|[€£]|-\s*\$?\s*\d", lower):
         # El signo de fecha ISO no representa un importe negativo.
-        without_dates = DATES.sub(" ", lower)
+        without_dates = (
+            without_period if "presupuesto" in words else DATES.sub(" ", lower)
+        )
         if re.search(
             r"\b(?:usd|eur|dolares?|euros?)\b|[€£]|-\s*\$?\s*\d", without_dates
         ):
@@ -1971,9 +2130,15 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 "reason": "Se admiten gastos positivos en COP; no se realiza conversión de moneda.",
             }
     if "presupuesto" in words:
+        if "date" in period:
+            return {
+                **unclear,
+                "reason": "El presupuesto es mensual; indique el mes y el año, no un día.",
+            }
+        budget_month = period.get("month", today.strftime("%Y-%m"))
         values = [
             value
-            for match in MONEY.finditer(DATES.sub(" ", message))
+            for match in MONEY.finditer(without_period)
             if (value := amount(match.group())) is not None
         ]
         if not values:
@@ -1981,7 +2146,7 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 "status": "proposal",
                 "persisted": False,
                 "model_invoked": False,
-                "request": {"action": "summary", "month": today.strftime("%Y-%m")},
+                "request": {"action": "summary", "month": budget_month},
             }
         if len(values) != 1:
             return {
@@ -1995,11 +2160,11 @@ def propose(message: str, reference_date: date | None = None) -> dict:
             "request": {
                 "action": "set_budget",
                 "currency": "COP",
-                "month": today.strftime("%Y-%m"),
+                "month": budget_month,
                 "amount": values[0],
             },
             "assumptions": [
-                "Mes actual; confirme otro mes mediante la solicitud JSON si corresponde."
+                f"Presupuesto mensual en COP para {budget_month}; añadir un operation_id único y estable antes de ejecutar."
             ],
         }
     explicit_dates = set()
@@ -2035,9 +2200,18 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         if any(amount(match.group()) is not None for match in MONEY.finditer(part))
     ]
     if len(priced) <= 1:
+        if len(clauses) > 1 and re.search(r"[;\n]", clean):
+            return {
+                **unclear,
+                "reason": "Cada gasto separado debe incluir su importe; no se omitirán conceptos sin precio.",
+            }
         clauses = [clean]
     else:
-        clauses = priced
+        if len(priced) != len(clauses):
+            return {
+                **unclear,
+                "reason": "Cada gasto separado debe incluir su importe; no se omitirán conceptos sin precio.",
+            }
     items = []
     for clause in clauses:
         matches = [(match, amount(match.group())) for match in MONEY.finditer(clause)]
@@ -2107,6 +2281,7 @@ from agentcraft_forge.domains.common import (
     normalize,
     now,
     operation_id,
+    parse_json,
     safe_path,
     text,
 )
@@ -2117,6 +2292,10 @@ PROMISE = re.compile(
 )
 PROGRESS = re.compile(
     r"\b(?:avance|avancé|avanzado|actualicé|actualizado|envié|enviado|entregué|entregado|terminé|terminado|completado|trabajé)\b",
+    re.IGNORECASE,
+)
+UNCERTAIN_PROGRESS = re.compile(
+    r"\b(?:no|nunca|tampoco|sin|voy a|vamos a|tengo que|debo|pendiente de)\b|[¿?]",
     re.IGNORECASE,
 )
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
@@ -2247,7 +2426,7 @@ def inventory(root: Path) -> dict[str, str]:
 def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     content = safe_path(root, relative).read_text(encoding="utf-8")
     if relative.endswith(".json"):
-        messages = json.loads(content)
+        messages = parse_json(content)
         if not isinstance(messages, list) or len(messages) > 5000:
             raise DomainError(
                 "invalid_source", "El JSON de WhatsApp debe ser una lista de mensajes."
@@ -2399,7 +2578,7 @@ def scan(root: Path, request: dict) -> dict:
                 "source_date": entry["date"],
                 "excerpt": body[:1500],
             }
-            if PROGRESS.search(body):
+            if PROGRESS.search(body) and not UNCERTAIN_PROGRESS.search(normalize(body)):
                 for loop in loops:
                     if (
                         (reference - source_date).days < stale_days
@@ -2793,6 +2972,13 @@ herramientas. No se inventa un presupuesto inicial ni se etiqueta un gasto como
 innecesario. Cada lote y su comprobante se confirman en una transacción SQLite.
 El comprobante refleja el estado al registrar la operación; una consulta nueva
 refleja el estado actual. No hay conversión de monedas ni conexión con cuentas.
+
+Las propuestas admiten `resumen de ayer`, `resumen del mes pasado` y meses como
+`septiembre de 2025` o `2025-09`. Un presupuesto conserva el mes solicitado;
+los meses nombrados necesitan año. Rangos, semanas, fechas contradictorias o una
+petición que mezcle registro y resumen requieren aclaración.
+En lotes con varios importes, los conceptos sin precio no se descartan.
+Los resúmenes se leen en un único snapshot SQLite incluso con otro escritor activo.
 [% else %]
 Conserve los documentos reales en journal/ y los exports en whatsapp/. Registre
 las tareas en open-loops.md, por ejemplo `- [ ] [2026-10-01] Entregar informe`.
@@ -2814,6 +3000,7 @@ fuentes cambiadas y posibles duplicados. Un lock evita dos aplicaciones concurre
 si un proceso se interrumpe, compruebe que terminó antes de retirar un lock residual.
 Las actualizaciones recientes detectadas se presentan para revisión; las heurísticas
 no demuestran que una tarea se haya completado ni que todas las promesas se detecten.
+Las negaciones, preguntas e intenciones futuras reconocidas no cuentan como progreso.
 [% endif %]
 
 ## Uso desde el chat
@@ -2822,6 +3009,9 @@ La habilidad local está en `.agents/skills/agentcraft-project/SKILL.md`.
 La compatibilidad de descubrimiento depende del asistente; puede adjuntar ese archivo
 como instrucciones si su cliente no descubre habilidades. No es un bot de WhatsApp.
 No comparta el directorio .data ni los recibos con datos personales en GitHub.
+Se rechazan solicitudes JSON con claves repetidas, NaN o Infinity antes de ejecutar
+el motor. En sesión interactiva, un mensaje no válido permite continuar la conversación.
+Actualizar AgentCraft no modifica automáticamente el código de este proyecto generado.
 
 ## Pruebas
 
@@ -2844,7 +3034,11 @@ from datetime import date
 from pathlib import Path
 
 from agent_app.domain import handle, propose
-from agent_app.domain_common import DomainError
+from agent_app.domain_common import DomainError, parse_json
+
+
+def report_error(exc):
+    print(json.dumps({"status": "error", "persisted": None if exc.code in {"verification_failed", "operation_unconfirmed"} else False, "code": exc.code, "message": str(exc)}, ensure_ascii=False))
 
 
 def main(argv=None):
@@ -2862,7 +3056,7 @@ def main(argv=None):
         if args.request:
             if args.request.is_symlink() or args.request.stat().st_size > 64_000:
                 raise DomainError("invalid_request", "Solicitud enlazada o superior a 64 KB.")
-            result = handle(root, json.loads(args.request.read_text(encoding="utf-8-sig")))
+            result = handle(root, parse_json(args.request.read_text(encoding="utf-8-sig")))
             print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
             return 0
         if args.message is not None:
@@ -2877,9 +3071,12 @@ def main(argv=None):
             if message.casefold() in {"salir", "exit", "quit"}:
                 return 0
             if message:
-                print(json.dumps(propose(message), ensure_ascii=False, indent=2))
+                try:
+                    print(json.dumps(propose(message), ensure_ascii=False, indent=2))
+                except DomainError as exc:
+                    report_error(exc)
     except DomainError as exc:
-        print(json.dumps({"status": "error", "persisted": None if exc.code in {"verification_failed", "operation_unconfirmed"} else False, "code": exc.code, "message": str(exc)}, ensure_ascii=False))
+        report_error(exc)
         return 1
     except (OSError, ValueError, sqlite3.Error) as exc:
         print(json.dumps({"status": "error", "persisted": None, "code": type(exc).__name__, "message": "No se pudo confirmar el estado. Revise o reintente con el mismo operation_id."}))
@@ -4013,7 +4210,7 @@ nombre ni garantiza su disponibilidad futura o los derechos sobre una marca.
 
 El entregable incluye fuente y wheel funcional, y el repositorio público
 `juliansantamaria0/agentcraft-forge`. Los ejemplos con OWNER explican cómo publicar
-una copia propia. Los comandos con `v0.2.0` requieren crear antes ese tag; para la
+una copia propia. Los comandos con `v0.2.1` requieren crear antes ese tag; para la
 versión actual puede instalarse desde `main`, con Git instalado.
 El comando PyPI solo funciona
 después de una publicación real. No se presenta una URL planeada como un paquete ya
@@ -4074,7 +4271,7 @@ python -m pip install uv==0.13.4
 uv sync --locked --all-extras --group dev
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.0-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
 agentcraft --version
 ```
 
@@ -4086,13 +4283,13 @@ usar `--force` como solución general a conflictos entre herramientas.
 #### Desde GitHub y PyPI, después de publicar
 
 ```console
-pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.0"
+pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
 ```
 
 Con el extra del diseñador de IA:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.0"
+pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
 ```
 
 La referencia fija un tag; para máxima precisión puede usarse un commit verificado.
@@ -4100,13 +4297,13 @@ Un repositorio privado requiere credenciales de Git del usuario. No incluya toke
 en la URL del comando. Una vez disponible en PyPI:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai]==0.2.0"
+pipx install --python 3.12 "agentcraft-forge[ai]==0.2.1"
 ```
 
 También es posible instalar en un venv administrado por el desarrollador:
 
 ```console
-python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.0"
+python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.1"
 ```
 
 pipx ofrece el comando global en su directorio de ejecutables y aísla dependencias.
@@ -4194,9 +4391,9 @@ uv run --locked pytest
 uv build --no-sources
 uv run --locked twine check dist/*
 git add src/agentcraft_forge/__init__.py CHANGELOG.md uv.lock
-git commit -m "chore: release 0.2.0"
+git commit -m "chore: release 0.2.1"
 git push origin main
-gh workflow run publish.yml --ref main -f version=0.2.0
+gh workflow run publish.yml --ref main -f version=0.2.1
 gh run list --workflow publish.yml
 ```
 
@@ -4337,7 +4534,7 @@ site/
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.1 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -4386,6 +4583,11 @@ Si ya instaló desde este repositorio, actualice con `pipx reinstall agentcraft-
 Compruebe `agentcraft --version` y `agentcraft doctor`. La instalación desde un wheel
 local conserva ese origen en pipx: reinstale desde el nuevo wheel o desde GitHub según
 corresponda. No se han publicado distribuciones de esta herramienta en PyPI.
+
+Actualizar la CLI cambia las plantillas para los proyectos nuevos. Los agentes ya
+generados conservan su código y sus datos: no se migran ni se sobrescriben al reinstalar.
+Para adoptar correcciones en un agente existente, genere una copia en otra carpeta,
+compare el código y ejecute sus pruebas antes de integrar los cambios.
 
 #### Usarlo desde el mismo chat
 
@@ -4885,14 +5087,14 @@ if __name__ == "__main__":
 
 ## 6. Pruebas y evidencia reproducible
 
-### Evidencia de validación — 0.2.0
+### Evidencia de validación — 0.2.1
 
 Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 81 pruebas correctas |
-| Cobertura de sentencias | 86 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
+| pytest, red bloqueada por fixture | 122 pruebas correctas |
+| Cobertura de sentencias | 87 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 21 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
@@ -4917,6 +5119,13 @@ declarado, dos formatos de export WhatsApp, snapshots y recuperación del compro
 tras una interrupción posterior a la escritura. Los recibos describen el resultado
 histórico de una operación; una consulta nueva obtiene el estado actual.
 
+La versión 0.2.1 añade regresiones de periodos explícitos y relativos, cambio de año,
+solicitudes mixtas, conceptos sin precio, progreso negado/interrogado/futuro y nombres
+reservados de Windows. Los procesos del runtime generado prueban el rechazo de JSON
+ambiguo sin crear SQLite y la continuidad del chat tras un mensaje inválido.
+Una prueba intercala el commit de otro escritor en modo WAL entre las consultas de
+un resumen y verifica que filas, recuento y categorías conserven el mismo snapshot.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -4933,7 +5142,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.0-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
@@ -5133,6 +5342,18 @@ def test_json_messages_preserve_source_id(tmp_path):
     assert report["candidates"][0]["source"]["message_id"] == "wa-message-01"
 
 
+def test_json_source_cannot_silently_replace_message_sender(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.json").write_text(
+        '[{"id":"wa-01","sender":"Otra persona","sender":"Lucía","date":"2026-10-20","text":"Tengo que enviar contrato"}]',
+        encoding="utf-8",
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_json"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
 def test_time_first_whatsapp_and_assignment_does_not_leak_to_next_message(tmp_path):
     request = fixture_workspace(tmp_path)
     (tmp_path / "whatsapp/chat.txt").write_text(
@@ -5151,6 +5372,25 @@ def test_old_progress_does_not_clear_stagnation(tmp_path):
     )
     report = handle(tmp_path, request)
     assert report["loops"][0]["status"] == "stalled_candidate"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "No he avanzado informe técnico del cliente Andino",
+        "Sin avance en informe técnico del cliente Andino",
+        "¿Has enviado informe técnico del cliente Andino?",
+        "Voy a dejar terminado informe técnico del cliente Andino",
+    ],
+)
+def test_denied_questioned_or_future_progress_does_not_clear_stagnation(
+    tmp_path, message
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(message, encoding="utf-8")
+    report = handle(tmp_path, request)
+    assert report["loops"][0]["status"] == "stalled_candidate"
+    assert report["loops"][0]["progress_evidence"] == []
 
 
 def test_receipt_is_recovered_after_write_but_before_confirmation(
@@ -5352,6 +5592,7 @@ def test_dry_run_json_does_not_wrap_long_strings(tmp_path):
 ### `tests/test_expenses.py`
 
 ````python
+import sqlite3
 from datetime import date
 
 import pytest
@@ -5573,6 +5814,96 @@ def test_summary_pagination_does_not_change_authoritative_totals(tmp_path):
     assert page["returned_count"] == 1
     assert page["has_more"]
     assert page["categories"]["Transporte"] == 36000
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("resumen de ayer", {"date": "2026-10-20"}),
+        ("resumen del 20/09/2026", {"date": "2026-09-20"}),
+        ("resumen de 2026-09", {"month": "2026-09"}),
+        ("resumen de septiembre de 2025", {"month": "2025-09"}),
+        ("resumen del mes pasado", {"month": "2026-09"}),
+        ("todos mis gastos de anteayer en resumen", {"date": "2026-10-19"}),
+    ],
+)
+def test_summary_preserves_requested_period(message, expected):
+    assert propose(message, TODAY)["request"] == {"action": "summary", **expected}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "resumen de la semana pasada",
+        "resumen de noviembre",
+        "resumen del 31/02/2026",
+        "resumen de ayer y hoy",
+        "resumen entre 2026-09-01 y 2026-09-30",
+        "Gasté $12.000 en taxi y dame un resumen",
+        "Gasté $12.000 en taxi y $20.000 en almuerzo y café",
+        "Gasté $12.000 en taxi; café",
+    ],
+)
+def test_unsupported_periods_and_partial_or_mixed_requests_need_clarification(message):
+    result = propose(message, TODAY)
+    assert result["status"] == "needs_clarification"
+    assert result["persisted"] is False
+    assert "request" not in result
+
+
+@pytest.mark.parametrize(
+    "period,expected",
+    [
+        ("2026-11", "2026-11"),
+        ("noviembre de 2027", "2027-11"),
+        ("mes pasado", "2026-09"),
+    ],
+)
+def test_budget_never_silently_uses_another_month(period, expected):
+    result = propose(f"Presupuesto de $2.500.000 para {period}", TODAY)
+    assert result["request"]["month"] == expected
+    assert result["request"]["amount"] == 2500000
+
+
+@pytest.mark.parametrize("period", ["noviembre", "hoy", "2026-13", "2026-11 y 2026-12"])
+def test_ambiguous_budget_period_never_becomes_a_write_proposal(period):
+    assert (
+        propose(f"Presupuesto $2.500.000 para {period}", TODAY)["status"]
+        == "needs_clarification"
+    )
+
+
+def test_relative_month_handles_year_boundary():
+    result = propose("resumen del mes pasado", date(2026, 1, 2))
+    assert result["request"]["month"] == "2025-12"
+
+
+def test_summary_uses_one_snapshot_when_another_writer_commits(tmp_path, monkeypatch):
+    handle(tmp_path, record())
+    original_connect = sqlite3.connect
+    connection = original_connect(tmp_path / ".data/expenses-v1.sqlite3")
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.close()
+    inserted = False
+
+    def interleave(statement):
+        nonlocal inserted
+        if "SELECT COUNT(*)" in statement and not inserted:
+            inserted = True
+            handle(tmp_path, record("concurrent-message-002"))
+
+    def connect(*args, **kwargs):
+        result = original_connect(*args, **kwargs)
+        result.set_trace_callback(interleave)
+        return result
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    result = handle(tmp_path, {"action": "summary"})
+    assert inserted
+    assert result["returned_count"] == result["count"] == 1
+    assert result["total"] == 12000
+    assert result["categories"] == {"Transporte": 12000}
+    assert handle(tmp_path, {"action": "summary"})["count"] == 2
 ````
 
 
@@ -5860,6 +6191,69 @@ def test_generated_runtime_persists_across_processes(tmp_path):
     assert invoke(request)["persisted"]
     assert invoke(request)["replayed"]
     assert invoke({"action": "summary"})["total"] == 24500
+
+
+def run_generated(target, tmp_path, *arguments, user_input=None):
+    return subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-I",
+            "-c",
+            "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('agent_app.runner',run_name='__main__')",
+            str(target / "src"),
+            "--root",
+            str(target),
+            *arguments,
+        ],
+        cwd=tmp_path,
+        input=user_input,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"action":"record","action":"summary"}',
+        '{"action":"record","expenses":[{"amount":1,"amount":12000}]}',
+        '{"action":"summary","offset":NaN}',
+        '{"action":"summary","offset":Infinity}',
+        '{"action":',
+        '{"action":"summary","offset":' + "9" * 5000 + "}",
+    ],
+)
+def test_generated_runtime_rejects_ambiguous_json_before_any_write(tmp_path, content):
+    target = generate(
+        design("strict-expenses", "Registrar gastos personales", Kind.expenses),
+        tmp_path,
+    )
+    request = tmp_path / "request.json"
+    request.write_text(content, encoding="utf-8")
+    result = run_generated(target, tmp_path, "--request", str(request))
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "invalid_json"
+    assert payload["persisted"] is False
+    assert not (target / ".data").exists()
+
+
+def test_interactive_session_recovers_from_invalid_message_without_writing(tmp_path):
+    target = generate(
+        design("chat-expenses", "Registrar gastos personales", Kind.expenses), tmp_path
+    )
+    result = run_generated(
+        target, tmp_path, user_input="x" * 6001 + "\nresumen mensual\nsalir\n"
+    )
+    assert result.returncode == 0
+    assert '"code": "invalid_text"' in result.stdout
+    assert '"action": "summary"' in result.stdout
+    assert not (target / ".data").exists()
 ````
 
 
@@ -5911,6 +6305,15 @@ def test_invalid_request_rejected_before_ai_call():
         design(
             "../bad", "Propósito válido para este proyecto", ai=True, designer=designer
         )
+
+
+@pytest.mark.parametrize("name", ["con", "nul", "aux", "prn", "com1", "lpt9"])
+def test_windows_reserved_names_are_rejected_before_ai_call_on_every_platform(name):
+    def designer(*args):
+        raise AssertionError("No debe llamarse al diseñador")
+
+    with pytest.raises(ValidationError, match="reservado"):
+        design(name, "Propósito válido para este proyecto", ai=True, designer=designer)
 ````
 
 
@@ -5948,6 +6351,21 @@ pruebe restauración y gestione locks residuales antes de usarlas como servicio.
 
 
 ### Changelog
+
+#### 0.2.1 — 2026-10-21
+
+- Resúmenes con fechas, meses explícitos y mes anterior sin sustituirlos por el mes
+  actual. Los presupuestos conservan el mes solicitado; un mes sin año pide aclaración.
+- Las peticiones mixtas de registro y resumen y los lotes con conceptos sin precio
+  piden aclaración en vez de omitir parte del mensaje.
+- Los resúmenes SQLite comparten una transacción de lectura para mantener coherencia
+  entre movimientos, recuento, categorías y saldo ante escrituras concurrentes.
+- JSON estricto en solicitudes y fuentes JSON de auditoría: rechaza claves duplicadas,
+  NaN, Infinity, sintaxis inválida y anidación excesiva antes de ejecutar el motor.
+- La auditoría no trata negaciones, preguntas ni intenciones futuras reconocidas como
+  evidencia de progreso. La sesión interactiva continúa tras un mensaje no válido.
+- Rechazo portable de nombres de proyecto reservados en Windows antes de llamar al
+  diseñador o crear archivos. Pruebas de regresión y documentación actualizadas.
 
 #### 0.2.0 — 2026-10-21
 

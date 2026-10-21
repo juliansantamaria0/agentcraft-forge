@@ -18,6 +18,7 @@ from agentcraft_forge.domains.common import (
     normalize,
     now,
     operation_id,
+    parse_json,
     safe_path,
     text,
 )
@@ -28,6 +29,10 @@ PROMISE = re.compile(
 )
 PROGRESS = re.compile(
     r"\b(?:avance|avancé|avanzado|actualicé|actualizado|envié|enviado|entregué|entregado|terminé|terminado|completado|trabajé)\b",
+    re.IGNORECASE,
+)
+UNCERTAIN_PROGRESS = re.compile(
+    r"\b(?:no|nunca|tampoco|sin|voy a|vamos a|tengo que|debo|pendiente de)\b|[¿?]",
     re.IGNORECASE,
 )
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
@@ -158,7 +163,7 @@ def inventory(root: Path) -> dict[str, str]:
 def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     content = safe_path(root, relative).read_text(encoding="utf-8")
     if relative.endswith(".json"):
-        messages = json.loads(content)
+        messages = parse_json(content)
         if not isinstance(messages, list) or len(messages) > 5000:
             raise DomainError(
                 "invalid_source", "El JSON de WhatsApp debe ser una lista de mensajes."
@@ -310,7 +315,7 @@ def scan(root: Path, request: dict) -> dict:
                 "source_date": entry["date"],
                 "excerpt": body[:1500],
             }
-            if PROGRESS.search(body):
+            if PROGRESS.search(body) and not UNCERTAIN_PROGRESS.search(normalize(body)):
                 for loop in loops:
                     if (
                         (reference - source_date).days < stale_days

@@ -43,3 +43,12 @@ def test_invalid_request_rejected_before_ai_call():
         design(
             "../bad", "Propósito válido para este proyecto", ai=True, designer=designer
         )
+
+
+@pytest.mark.parametrize("name", ["con", "nul", "aux", "prn", "com1", "lpt9"])
+def test_windows_reserved_names_are_rejected_before_ai_call_on_every_platform(name):
+    def designer(*args):
+        raise AssertionError("No debe llamarse al diseñador")
+
+    with pytest.raises(ValidationError, match="reservado"):
+        design(name, "Propósito válido para este proyecto", ai=True, designer=designer)

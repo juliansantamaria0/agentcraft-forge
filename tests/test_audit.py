@@ -150,6 +150,18 @@ def test_json_messages_preserve_source_id(tmp_path):
     assert report["candidates"][0]["source"]["message_id"] == "wa-message-01"
 
 
+def test_json_source_cannot_silently_replace_message_sender(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.json").write_text(
+        '[{"id":"wa-01","sender":"Otra persona","sender":"Lucía","date":"2026-10-20","text":"Tengo que enviar contrato"}]',
+        encoding="utf-8",
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_json"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
 def test_time_first_whatsapp_and_assignment_does_not_leak_to_next_message(tmp_path):
     request = fixture_workspace(tmp_path)
     (tmp_path / "whatsapp/chat.txt").write_text(
@@ -168,6 +180,25 @@ def test_old_progress_does_not_clear_stagnation(tmp_path):
     )
     report = handle(tmp_path, request)
     assert report["loops"][0]["status"] == "stalled_candidate"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "No he avanzado informe técnico del cliente Andino",
+        "Sin avance en informe técnico del cliente Andino",
+        "¿Has enviado informe técnico del cliente Andino?",
+        "Voy a dejar terminado informe técnico del cliente Andino",
+    ],
+)
+def test_denied_questioned_or_future_progress_does_not_clear_stagnation(
+    tmp_path, message
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(message, encoding="utf-8")
+    report = handle(tmp_path, request)
+    assert report["loops"][0]["status"] == "stalled_candidate"
+    assert report["loops"][0]["progress_evidence"] == []
 
 
 def test_receipt_is_recovered_after_write_but_before_confirmation(

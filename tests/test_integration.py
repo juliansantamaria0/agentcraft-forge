@@ -138,3 +138,66 @@ def test_generated_runtime_persists_across_processes(tmp_path):
     assert invoke(request)["persisted"]
     assert invoke(request)["replayed"]
     assert invoke({"action": "summary"})["total"] == 24500
+
+
+def run_generated(target, tmp_path, *arguments, user_input=None):
+    return subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-I",
+            "-c",
+            "import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module('agent_app.runner',run_name='__main__')",
+            str(target / "src"),
+            "--root",
+            str(target),
+            *arguments,
+        ],
+        cwd=tmp_path,
+        input=user_input,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"action":"record","action":"summary"}',
+        '{"action":"record","expenses":[{"amount":1,"amount":12000}]}',
+        '{"action":"summary","offset":NaN}',
+        '{"action":"summary","offset":Infinity}',
+        '{"action":',
+        '{"action":"summary","offset":' + "9" * 5000 + "}",
+    ],
+)
+def test_generated_runtime_rejects_ambiguous_json_before_any_write(tmp_path, content):
+    target = generate(
+        design("strict-expenses", "Registrar gastos personales", Kind.expenses),
+        tmp_path,
+    )
+    request = tmp_path / "request.json"
+    request.write_text(content, encoding="utf-8")
+    result = run_generated(target, tmp_path, "--request", str(request))
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "invalid_json"
+    assert payload["persisted"] is False
+    assert not (target / ".data").exists()
+
+
+def test_interactive_session_recovers_from_invalid_message_without_writing(tmp_path):
+    target = generate(
+        design("chat-expenses", "Registrar gastos personales", Kind.expenses), tmp_path
+    )
+    result = run_generated(
+        target, tmp_path, user_input="x" * 6001 + "\nresumen mensual\nsalir\n"
+    )
+    assert result.returncode == 0
+    assert '"code": "invalid_text"' in result.stdout
+    assert '"action": "summary"' in result.stdout
+    assert not (target / ".data").exists()

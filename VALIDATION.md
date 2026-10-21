@@ -1,11 +1,11 @@
-# Evidencia de validación — 0.2.0
+# Evidencia de validación — 0.2.1
 
 Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 81 pruebas correctas |
-| Cobertura de sentencias | 86 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
+| pytest, red bloqueada por fixture | 122 pruebas correctas |
+| Cobertura de sentencias | 87 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 21 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
@@ -30,6 +30,13 @@ declarado, dos formatos de export WhatsApp, snapshots y recuperación del compro
 tras una interrupción posterior a la escritura. Los recibos describen el resultado
 histórico de una operación; una consulta nueva obtiene el estado actual.
 
+La versión 0.2.1 añade regresiones de periodos explícitos y relativos, cambio de año,
+solicitudes mixtas, conceptos sin precio, progreso negado/interrogado/futuro y nombres
+reservados de Windows. Los procesos del runtime generado prueban el rechazo de JSON
+ambiguo sin crear SQLite y la continuidad del chat tras un mensaje inválido.
+Una prueba intercala el commit de otro escritor en modo WAL entre las consultas de
+un resumen y verifica que filas, recuento y categorías conserven el mismo snapshot.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -46,7 +53,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.0-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.1-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
