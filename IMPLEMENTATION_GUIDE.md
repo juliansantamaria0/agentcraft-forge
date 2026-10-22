@@ -1,6 +1,6 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
-**Guía técnica y código completo · Versión 0.2.3 · 21 de octubre de 2026**
+**Guía técnica y código completo · Versión 0.2.4 · 22 de octubre de 2026**
 
 El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
 
@@ -10,7 +10,7 @@ El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructu
 
 ## Uso desde el chat, gastos y compromisos en 0.2
 
-### Operación por chat y comprobantes — 0.2.3
+### Operación por chat y comprobantes — 0.2.4
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -209,6 +209,13 @@ y `[09:40, 21/10/2026] Nombre: texto`. Conserva el mensaje multilinea. El format
 [{"id":"mensaje-001","sender":"Persona","date":"2026-10-21","text":"Me comprometí a entregar el informe mañana"}]
 ```
 
+Los archivos UTF-8 pueden incluir BOM y la extensión JSON no distingue mayúsculas.
+El texto de cada mensaje JSON puede contener varias líneas; los IDs deben ser únicos
+dentro del archivo. En esa evidencia, line identifica el índice de mensaje y
+message_line su línea interna. En texto plano, line conserva la línea física del export.
+Encabezados con aspecto de mensaje pero fuera de los formatos soportados generan
+invalid_source; no se atribuyen al emisor anterior. El contenido debe ser UTF-8 válido.
+
 La solicitud de auditoría es:
 
 ```json
@@ -224,10 +231,34 @@ Las negaciones, preguntas y expresiones futuras reconocidas por las reglas no cu
 como progreso. Una frase ambigua puede necesitar revisión manual; el motor no prueba
 comprensión semántica completa ni marca automáticamente un compromiso como terminado.
 
+Los candidatos conservan date_warnings cuando el vencimiento es inválido, contiene
+varias fechas distintas o necesita un año explícito para evitar elegir una fecha
+pasada por error. En esos casos due_date es null y la tarea permanece disponible para
+revisión. Una fecha general del encargo no sustituye silenciosamente una fecha distinta
+del punto individual; deadline_source conserva la línea que declara la entrega.
+Seleccionar ese candidato no resuelve por sí solo la ambigüedad ni añade un tag due.
+Los meses sin año usan el año de la fuente solo cuando esa fecha no queda antes de ella.
+«Pasado mañana», «próximo viernes» y «hoy por la mañana» se distinguen con reglas;
+la interpretación sigue siendo heurística. Negaciones y preguntas reconocidas se omiten
+como promesas, mientras que «no olvidar» sigue admitiéndose como recordatorio.
+
 Scan guarda su informe local, pero persisted=false indica que no modificó el registro
 canónico. Fuentes ausentes o sin fecha producen incomplete. La ausencia de candidatos
 no demuestra sincronización total: el extractor sigue siendo heurístico. La identidad
 owner es declarada y no constituye autenticación.
+
+La lectura verifica el hash del contenido contra el inventario y vuelve a comprobar
+el inventario antes de guardar el informe. Si detecta cambios, devuelve sources_changed
+y exige volver a auditar. Los informes usan scan_version=2, incluido en su ID: un
+cambio de formato no sobrescribe el informe previo. Apply rechaza informes de otro
+formato con unsupported_scan; genere y revise uno nuevo al actualizar el motor.
+Un comprobante ya confirmado sigue siendo histórico y los reintentos conservan su ID.
+
+Los informes no pueden superar 2 MB. Si son demasiado grandes, reduzca la ventana o
+divida las fuentes; no se guarda un informe que luego apply no pueda leer. Las fuentes
+y el registro canónico admiten hasta 1 MB por archivo. Apply comprueba el tamaño del
+registro resultante antes de escribir. Las fuentes sin fecha generan un diagnóstico
+por archivo con su número de líneas, conservando el estado incomplete.
 
 Después de revisar y autorizar IDs concretos:
 
@@ -239,6 +270,9 @@ Apply comprueba que las fuentes y open-loops.md sigan en el mismo snapshot; rech
 posibles duplicados sin resolver y candidatos ajenos al informe. Guarda backup, escribe
 por reemplazo atómico y verifica el hash resultante antes de confirmar. Un journal
 pendiente permite recuperar un recibo si hubo interrupción después de escribir.
+El backup conserva los bytes originales, incluidos los saltos CRLF y el BOM, y su
+SHA-256 coincide con before_sha256. La copia del registro se verifica también contra
+el snapshot antes de preparar la actualización.
 La integridad local no impide que alguien con los mismos permisos modifique también
 los informes. No se pretende proporcionar aislamiento frente a atacantes locales.
 
@@ -1573,7 +1607,7 @@ app()
 ````python
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 ````
 
 
@@ -2439,9 +2473,18 @@ UNCERTAIN_PROGRESS = re.compile(
     r"\b(?:no|nunca|tampoco|sin|voy a|vamos a|tengo que|debo|pendiente de)\b|[¿?]",
     re.IGNORECASE,
 )
+NEGATED_PROMISE = re.compile(
+    r"\b(?:no|nunca|tampoco)\s+(?:me\s+)?(?:comprometi|tengo que|quede de|acorde con|debo)\b|[¿?]"
+)
+SCAN_VERSION = 2
+MAX_REPORT_BYTES = 2_000_000
+MAX_SOURCE_BYTES = 1_000_000
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
 WHATSAPP_TIME_FIRST = re.compile(
     r"^\[\d{1,2}:\d{2}(?::\d{2})?,\s*(\d{1,2})/(\d{1,2})/(\d{4})\]\s*([^:]+):\s*(.*)$"
+)
+UNSUPPORTED_HEADER = re.compile(
+    r"^\[[^\]]*\d{1,2}:\d{2}[^\]]*\]\s*[^:]+:|^\d{1,4}[/-]\d{1,2}[/-]\d{2,4},?\s+\d{1,2}:\d{2}\s+-\s+[^:]+:"
 )
 STOP = {
     "para",
@@ -2507,33 +2550,68 @@ def similarity(left: str, right: str) -> float:
 
 def due_date(value: str, reference: date) -> str | None:
     lower = normalize(value)
-    explicit = re.search(r"\b\d{4}-\d{2}-\d{2}\b", lower)
-    if explicit:
-        return iso_date(explicit.group())
-    if "manana" in lower:
-        return (reference + timedelta(days=1)).isoformat()
-    if "hoy" in lower:
-        return reference.isoformat()
-    for index, day in enumerate(WEEKDAYS):
-        if re.search(rf"\b{day}\b", lower):
-            return (
-                reference + timedelta(days=(index - reference.weekday()) % 7)
-            ).isoformat()
-    spanish = re.search(
-        r"\b(\d{1,2}) de (" + "|".join(MONTHS[1:]) + r")(?: de (\d{4}))?\b", lower
-    )
-    if spanish:
-        try:
-            return date(
+    dates = set()
+    try:
+        dates.update(
+            date.fromisoformat(token)
+            for token in re.findall(r"\b\d{4}-\d{2}-\d{2}\b", lower)
+        )
+        for day_part, month_part, year in re.findall(
+            r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", lower
+        ):
+            dates.add(date(int(year), int(month_part), int(day_part)))
+        if re.search(r"\besta manana\b", lower):
+            dates.add(reference)
+        lower = re.sub(r"\b(?:esta|por la|de la) manana\b", " ", lower)
+        if re.search(r"\bpasado manana\b", lower):
+            dates.add(reference + timedelta(days=2))
+            lower = re.sub(r"\bpasado manana\b", " ", lower)
+        if re.search(r"\bmanana\b", lower):
+            dates.add(reference + timedelta(days=1))
+        if re.search(r"\bhoy\b", lower):
+            dates.add(reference)
+        for index, day in enumerate(WEEKDAYS):
+            if re.search(rf"\b{day}\b", lower):
+                offset = (index - reference.weekday()) % 7
+                if offset == 0 and re.search(rf"\bproximo {day}\b", lower):
+                    offset = 7
+                dates.add(reference + timedelta(days=offset))
+        for spanish in re.finditer(
+            r"\b(\d{1,2}) de ("
+            + "|".join(MONTHS[1:])
+            + r")(?:\s+(?:del?\s+)?(\d{4}))?\b",
+            lower,
+        ):
+            resolved = date(
                 int(spanish[3] or reference.year),
                 MONTHS.index(spanish[2]),
                 int(spanish[1]),
-            ).isoformat()
-        except ValueError as exc:
-            raise DomainError(
-                "invalid_date", "Una fuente contiene un vencimiento inválido."
-            ) from exc
-    return None
+            )
+            if not spanish[3] and resolved < reference:
+                raise DomainError(
+                    "ambiguous_deadline",
+                    "Indique el año del vencimiento; la fecha sin año quedaría antes de la fuente.",
+                )
+            dates.add(resolved)
+    except DomainError:
+        raise
+    except (ValueError, OverflowError) as exc:
+        raise DomainError(
+            "invalid_date", "Una fuente contiene un vencimiento inválido."
+        ) from exc
+    if len(dates) > 1:
+        raise DomainError(
+            "ambiguous_deadline",
+            "Hay varias fechas distintas; revise cuál corresponde al vencimiento.",
+        )
+    return next(iter(dates)).isoformat() if dates else None
+
+
+def resolve_deadline(value: str, reference: date) -> tuple[str | None, list[str]]:
+    try:
+        return due_date(value, reference), []
+    except DomainError as exc:
+        return None, [str(exc)]
 
 
 def inventory(root: Path) -> dict[str, str]:
@@ -2541,7 +2619,7 @@ def inventory(root: Path) -> dict[str, str]:
     result = {}
     canonical_file = safe_path(root, "open-loops.md")
     if canonical_file.is_file():
-        if canonical_file.stat().st_size > 1_000_000:
+        if canonical_file.stat().st_size > MAX_SOURCE_BYTES:
             raise DomainError(
                 "oversized_source", "El registro de compromisos supera 1 MB."
             )
@@ -2554,7 +2632,7 @@ def inventory(root: Path) -> dict[str, str]:
             relative = path.relative_to(root).as_posix()
             safe_path(root, relative)
             if path.is_file() and path.suffix.lower() in {".md", ".txt", ".json"}:
-                if path.stat().st_size > 1_000_000:
+                if path.stat().st_size > MAX_SOURCE_BYTES:
                     raise DomainError("oversized_source", "Una fuente supera 1 MB.")
                 result[relative] = file_hash(path)
                 if len(result) > 200:
@@ -2564,27 +2642,63 @@ def inventory(root: Path) -> dict[str, str]:
     return result
 
 
-def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
-    content = safe_path(root, relative).read_text(encoding="utf-8")
-    if relative.endswith(".json"):
+def read_source(root: Path, relative: str, expected_hash: str | None = None) -> str:
+    with safe_path(root, relative).open("rb") as stream:
+        content_bytes = stream.read(MAX_SOURCE_BYTES + 1)
+    if len(content_bytes) > MAX_SOURCE_BYTES:
+        raise DomainError("oversized_source", "Una fuente supera 1 MB.")
+    if (
+        expected_hash is not None
+        and hashlib.sha256(content_bytes).hexdigest() != expected_hash
+    ):
+        raise DomainError(
+            "sources_changed", "Una fuente cambió durante la lectura; vuelva a auditar."
+        )
+    try:
+        return content_bytes.decode("utf-8-sig")
+    except UnicodeError as exc:
+        raise DomainError(
+            "invalid_source", "Las fuentes deben ser texto UTF-8 válido."
+        ) from exc
+
+
+def source_lines(
+    root: Path, relative: str, owner: str, expected_hash: str | None = None
+) -> list[dict]:
+    content = read_source(root, relative, expected_hash)
+    if Path(relative).suffix.lower() == ".json":
         messages = parse_json(content)
         if not isinstance(messages, list) or len(messages) > 5000:
             raise DomainError(
                 "invalid_source", "El JSON de WhatsApp debe ser una lista de mensajes."
             )
         result = []
+        seen_ids = set()
         for index, item in enumerate(messages, 1):
             fields(item, {"id", "sender", "date", "text"})
-            result.append(
-                {
-                    "line": index,
-                    "text": text(item["text"], 6000),
-                    "sender": text(item["sender"], 100),
-                    "date": iso_date(item["date"]),
-                    "message_id": text(item["id"], 128),
-                    "message_start": True,
-                }
-            )
+            identifier = text(item["id"], 128)
+            if identifier in seen_ids:
+                raise DomainError(
+                    "invalid_source",
+                    "El export JSON contiene identificadores de mensaje repetidos.",
+                )
+            seen_ids.add(identifier)
+            metadata = {
+                "line": index,
+                "sender": text(item["sender"], 100),
+                "date": iso_date(item["date"]),
+                "message_id": identifier,
+            }
+            text(item["text"], 6000)
+            for message_line, body in enumerate(item["text"].splitlines(), 1):
+                result.append(
+                    {
+                        **metadata,
+                        "text": body.strip(),
+                        "message_line": message_line,
+                        "message_start": message_line == 1,
+                    }
+                )
         return result
     filename_date = re.search(r"\d{4}-\d{2}-\d{2}", Path(relative).name)
     current = {
@@ -2595,10 +2709,28 @@ def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     result = []
     for index, line in enumerate(content.splitlines(), 1):
         match = WHATSAPP.match(line) or WHATSAPP_TIME_FIRST.match(line)
+        if (
+            not match
+            and relative.startswith("whatsapp/")
+            and UNSUPPORTED_HEADER.match(line)
+        ):
+            raise DomainError(
+                "invalid_source",
+                "Encabezado de WhatsApp no compatible; use los formatos con año de cuatro cifras documentados.",
+            )
         if match:
+            try:
+                message_date = date(
+                    int(match[3]), int(match[2]), int(match[1])
+                ).isoformat()
+            except ValueError as exc:
+                raise DomainError(
+                    "invalid_source",
+                    "El export contiene una fecha de mensaje inválida.",
+                ) from exc
             current = {
                 "sender": match[4].strip(),
-                "date": date(int(match[3]), int(match[2]), int(match[1])).isoformat(),
+                "date": message_date,
                 "message_id": str(index),
             }
             line = match[5]
@@ -2613,13 +2745,28 @@ def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     return result
 
 
-def parse_loops(root: Path, reference: date, stale_days: int) -> list[dict]:
+def source_evidence(relative: str, entry: dict, source_hash: str) -> dict:
+    return {
+        "file": relative,
+        "line": entry["line"],
+        "source_sha256": source_hash,
+        "message_id": entry["message_id"],
+        "message_line": entry.get("message_line"),
+        "sender": entry["sender"],
+        "source_date": entry["date"],
+        "excerpt": entry["text"][:1500],
+    }
+
+
+def parse_loops(
+    root: Path, reference: date, stale_days: int, expected_hash: str | None = None
+) -> list[dict]:
     path = safe_path(root, "open-loops.md")
     if not path.is_file():
         return []
     loops = []
     for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
+        read_source(root, "open-loops.md", expected_hash).splitlines(), 1
     ):
         match = re.match(r"^\s*[-*]\s+\[([ xX])\]\s*(.+)$", line)
         if not match:
@@ -2668,23 +2815,22 @@ def scan(root: Path, request: dict) -> dict:
     inputs = [name for name in sources if name != "open-loops.md"]
     if not inputs:
         errors.append("No hay fuentes de journal o WhatsApp para revisar.")
-    loops = parse_loops(root, reference, stale_days)
+    loops = parse_loops(root, reference, stale_days, sources.get("open-loops.md"))
     candidates = []
     skipped_old = 0
     ignored_other_senders = 0
     for relative in inputs:
         assignment_owner = None
         assignment_candidates = []
-        for entry in source_lines(root, relative, owner):
+        undated_count = 0
+        for entry in source_lines(root, relative, owner, sources[relative]):
             body = entry["text"]
             if entry["message_start"]:
                 assignment_owner = None
                 assignment_candidates = []
             if not entry["date"]:
                 if body:
-                    errors.append(
-                        f"Fuente sin fecha comprobable: {relative}:{entry['line']}."
-                    )
+                    undated_count += 1
                 continue
             source_date = date.fromisoformat(entry["date"])
             if source_date > reference or source_date < reference - timedelta(
@@ -2699,9 +2845,32 @@ def scan(root: Path, request: dict) -> dict:
                 continue
             deadline = re.search(r"fecha de entrega\s*:\s*(.+)", body, re.IGNORECASE)
             if deadline and assignment_owner:
-                due = due_date(deadline[1], source_date)
+                due, warnings = resolve_deadline(deadline[1], source_date)
                 for candidate in assignment_candidates:
-                    candidate["due_date"] = due
+                    candidate["deadline_source"] = source_evidence(
+                        relative, entry, sources[relative]
+                    )
+                    if (
+                        warnings
+                        or candidate["date_warnings"]
+                        or (
+                            due
+                            and candidate["due_date"]
+                            and due != candidate["due_date"]
+                        )
+                    ):
+                        candidate["due_date"] = None
+                        candidate["date_warnings"] = list(
+                            dict.fromkeys(
+                                [
+                                    *candidate["date_warnings"],
+                                    *warnings,
+                                    "Revise las fechas del encargo y de la línea de entrega.",
+                                ]
+                            )
+                        )
+                    elif due:
+                        candidate["due_date"] = due
                 continue
             is_assignment = assignment_owner is not None and bool(
                 re.match(r"^(?:\d+[.)]|[-*])\s+", body)
@@ -2710,15 +2879,7 @@ def scan(root: Path, request: dict) -> dict:
             if responsible is None or normalize(responsible) != normalize(owner):
                 ignored_other_senders += 1
                 continue
-            evidence = {
-                "file": relative,
-                "line": entry["line"],
-                "source_sha256": sources[relative],
-                "message_id": entry["message_id"],
-                "sender": entry["sender"],
-                "source_date": entry["date"],
-                "excerpt": body[:1500],
-            }
+            evidence = source_evidence(relative, entry, sources[relative])
             if PROGRESS.search(body) and not UNCERTAIN_PROGRESS.search(normalize(body)):
                 for loop in loops:
                     if (
@@ -2733,13 +2894,17 @@ def scan(root: Path, request: dict) -> dict:
                 continue
             if not is_assignment and not PROMISE.search(body):
                 continue
+            if not is_assignment and NEGATED_PROMISE.search(normalize(body)):
+                continue
             task = re.sub(r"^(?:\d+[.)]|[-*])\s+", "", body).strip()
             task = " ".join(task.split())[:1000]
+            due, warnings = resolve_deadline(task, source_date)
             candidate = {
                 "id": digest(
                     {
                         "file": relative,
                         "line": entry["line"],
+                        "message_line": entry.get("message_line"),
                         "text": task,
                         "owner": owner,
                     }
@@ -2748,7 +2913,8 @@ def scan(root: Path, request: dict) -> dict:
                 "owner": owner,
                 "kind": "request_to_owner" if is_assignment else "commitment_candidate",
                 "acceptance_confirmed": False,
-                "due_date": due_date(task, source_date),
+                "due_date": due,
+                "date_warnings": warnings,
                 "source": evidence,
                 "possible_matches": [
                     {
@@ -2763,6 +2929,10 @@ def scan(root: Path, request: dict) -> dict:
             candidates.append(candidate)
             if is_assignment:
                 assignment_candidates.append(candidate)
+        if undated_count:
+            errors.append(
+                f"Fuente sin fecha comprobable: {relative} ({undated_count} líneas sin fecha)."
+            )
     for loop in loops:
         loop["status"] = (
             "completed"
@@ -2779,6 +2949,7 @@ def scan(root: Path, request: dict) -> dict:
         )
     # El ID vincula la solicitud normalizada a un snapshot; no se ocultan coincidencias.
     identity = {
+        "scan_version": SCAN_VERSION,
         "owner": owner,
         "reference_date": reference.isoformat(),
         "stale_days": stale_days,
@@ -2787,6 +2958,7 @@ def scan(root: Path, request: dict) -> dict:
     }
     scan_id = digest(identity)
     report = {
+        "scan_version": SCAN_VERSION,
         "status": "incomplete" if errors else "review_required",
         "scan_id": scan_id,
         "created_at": now(),
@@ -2805,8 +2977,19 @@ def scan(root: Path, request: dict) -> dict:
             "Cada candidato requiere revisión; una petición de un tercero no confirma aceptación.",
         ],
     }
+    content = canonical(report)
+    if len(content.encode("utf-8")) > MAX_REPORT_BYTES:
+        raise DomainError(
+            "report_too_large",
+            "El informe supera 2 MB; reduzca la ventana o divida las fuentes antes de auditar.",
+        )
+    if inventory(root) != sources:
+        raise DomainError(
+            "sources_changed",
+            "Las fuentes cambiaron durante la auditoría; vuelva a auditar.",
+        )
     target = safe_path(root, f".agentcraft/audit/scans/{scan_id}.json")
-    atomic_text(target, canonical(report))
+    atomic_text(target, content)
     return report
 
 
@@ -2869,11 +3052,20 @@ def apply(root: Path, request: dict) -> dict:
                         "Hay una operación pendiente y el registro cambió; revise el comprobante y el backup antes de continuar.",
                     )
         report_path = safe_path(root, f".agentcraft/audit/scans/{scan_id}.json")
-        if not report_path.is_file() or report_path.stat().st_size > 2_000_000:
+        if not report_path.is_file() or report_path.stat().st_size > MAX_REPORT_BYTES:
             raise DomainError(
                 "invalid_scan", "No existe un informe local de tamaño válido."
             )
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = parse_json(report_path.read_text(encoding="utf-8-sig"))
+        if (
+            not isinstance(report, dict)
+            or type(report.get("scan_version")) is not int
+            or report["scan_version"] != SCAN_VERSION
+        ):
+            raise DomainError(
+                "unsupported_scan",
+                "El informe pertenece a otro formato de auditoría; vuelva a escanear y revisar.",
+            )
         if report["status"] != "review_required":
             raise DomainError(
                 "incomplete_scan", "No se puede aplicar una auditoría incompleta."
@@ -2894,7 +3086,14 @@ def apply(root: Path, request: dict) -> dict:
                 "possible_duplicate",
                 "Hay coincidencias con tareas existentes; resuélvalas antes de aplicar.",
             )
-        original = canonical_path.read_text(encoding="utf-8")
+        original_bytes = canonical_path.read_bytes()
+        before_hash = hashlib.sha256(original_bytes).hexdigest()
+        if before_hash != report["source_snapshot"].get("open-loops.md"):
+            raise DomainError(
+                "stale_scan",
+                "El registro cambió durante la lectura; vuelva a auditar y revisar.",
+            )
+        original = original_bytes.decode("utf-8")
         entries = []
         for candidate in selected:
             due = f" [due: {candidate['due_date']}]" if candidate["due_date"] else ""
@@ -2907,6 +3106,11 @@ def apply(root: Path, request: dict) -> dict:
             + "\n".join(entries)
             + "\n"
         )
+        if len(updated.encode("utf-8")) > MAX_SOURCE_BYTES:
+            raise DomainError(
+                "oversized_source",
+                "El registro actualizado superaría 1 MB; reorganice el registro antes de aplicar.",
+            )
         backup = safe_path(root, f".agentcraft/audit/backups/{digest(identifier)}.md")
         atomic_text(backup, original)
         receipt = {
@@ -2918,7 +3122,7 @@ def apply(root: Path, request: dict) -> dict:
             "scan_id": scan_id,
             "candidate_ids": ids,
             "count": len(ids),
-            "before_sha256": file_hash(canonical_path),
+            "before_sha256": before_hash,
             "after_sha256": hashlib.sha256(updated.encode()).hexdigest(),
             "backup": backup.relative_to(root).as_posix(),
             "created_at": now(),
@@ -3145,6 +3349,14 @@ si un proceso se interrumpe, compruebe que terminó antes de retirar un lock res
 Las actualizaciones recientes detectadas se presentan para revisión; las heurísticas
 no demuestran que una tarea se haya completado ni que todas las promesas se detecten.
 Las negaciones, preguntas e intenciones futuras reconocidas no cuentan como progreso.
+Los exports JSON admiten BOM, extensión .JSON y mensajes multilínea con IDs únicos.
+source.message_line conserva la línea interna y deadline_source la evidencia de una
+entrega general. date_warnings señala vencimientos dudosos; due_date queda vacío sin
+eliminar la tarea. Revise esas advertencias antes de seleccionar candidatos.
+El informe usa scan_version=2: al incorporar este motor a un agente anterior, vuelva
+a escanear antes de aplicar un informe de otro formato. Las fuentes que cambian durante
+la lectura obligan a repetir la auditoría. El informe admite 2 MB y el registro 1 MB;
+los tamaños se comprueban antes de guardar o aplicar.
 [% endif %]
 
 ## Uso desde el chat
@@ -3237,6 +3449,9 @@ if __name__ == "__main__":
 ````python
 """Prueba de dominio del proyecto generado; no usa modelos ni datos del usuario."""
 
+[% if kind == 'audit' %]
+import json
+[% endif %]
 import tempfile
 import unittest
 from pathlib import Path
@@ -3263,10 +3478,14 @@ class DomainContract(unittest.TestCase):
             (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
             (root / "journal").mkdir()
             (root / "journal/2026-10-21.md").write_text("Me comprometí a entregar el documento mañana.\n", encoding="utf-8")
+            (root / "whatsapp").mkdir()
+            (root / "whatsapp/messages.JSON").write_text(json.dumps([{"id": "test-wa-001", "sender": "Otra persona", "date": "2026-10-21", "text": "Compromisos para Persona de prueba:\n1. Revisar inventario de equipos\nFecha de entrega: 22 de octubre"}], ensure_ascii=False), encoding="utf-8-sig")
             result = handle(root, {"action": "scan", "owner": "Persona de prueba", "reference_date": "2026-10-21"})
             self.assertEqual(result["status"], "review_required")
             self.assertEqual(result["candidates"][0]["due_date"], "2026-10-22")
             self.assertFalse(result["persisted"])
+            self.assertEqual(len(result["candidates"]), 2)
+            self.assertEqual(result["candidates"][1]["source"]["message_line"], 2)
 [% endif %]
 ````
 
@@ -4377,7 +4596,7 @@ nombre ni garantiza su disponibilidad futura o los derechos sobre una marca.
 
 El entregable incluye fuente y wheel funcional, y el repositorio público
 `juliansantamaria0/agentcraft-forge`. Los ejemplos con OWNER explican cómo publicar
-una copia propia. Los comandos con `v0.2.3` requieren crear antes ese tag; para la
+una copia propia. Los comandos con `v0.2.4` requieren crear antes ese tag; para la
 versión actual puede instalarse desde `main`, con Git instalado.
 El comando PyPI solo funciona
 después de una publicación real. No se presenta una URL planeada como un paquete ya
@@ -4438,7 +4657,7 @@ python -m pip install uv==0.13.4
 uv sync --locked --all-extras --group dev
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.4-py3-none-any.whl
 agentcraft --version
 ```
 
@@ -4450,13 +4669,13 @@ usar `--force` como solución general a conflictos entre herramientas.
 #### Desde GitHub y PyPI, después de publicar
 
 ```console
-pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
+pipx install --python 3.12 "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.4"
 ```
 
 Con el extra del diseñador de IA:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
+pipx install --python 3.12 "agentcraft-forge[ai] @ git+https://github.com/OWNER/agentcraft-forge.git@v0.2.4"
 ```
 
 La referencia fija un tag; para máxima precisión puede usarse un commit verificado.
@@ -4464,13 +4683,13 @@ Un repositorio privado requiere credenciales de Git del usuario. No incluya toke
 en la URL del comando. Una vez disponible en PyPI:
 
 ```console
-pipx install --python 3.12 "agentcraft-forge[ai]==0.2.3"
+pipx install --python 3.12 "agentcraft-forge[ai]==0.2.4"
 ```
 
 También es posible instalar en un venv administrado por el desarrollador:
 
 ```console
-python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.3"
+python -m pip install "git+https://github.com/OWNER/agentcraft-forge.git@v0.2.4"
 ```
 
 pipx ofrece el comando global en su directorio de ejecutables y aísla dependencias.
@@ -4558,9 +4777,9 @@ uv run --locked pytest
 uv build --no-sources
 uv run --locked twine check dist/*
 git add src/agentcraft_forge/__init__.py CHANGELOG.md uv.lock
-git commit -m "chore: release 0.2.3"
+git commit -m "chore: release 0.2.4"
 git push origin main
-gh workflow run publish.yml --ref main -f version=0.2.3
+gh workflow run publish.yml --ref main -f version=0.2.4
 gh run list --workflow publish.yml
 ```
 
@@ -4701,7 +4920,7 @@ site/
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.3 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.4 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -4765,6 +4984,11 @@ no sustituyen pruebas de comportamiento ni una firma de distribución.
 En 0.2.3, consultar gastos o comprobantes abre la base en modo de solo lectura;
 consultar un proyecto vacío no crea archivos de datos. El runtime ReAct comprueba
 llamadas mal formadas e identificadores antes de ejecutar cada lote de herramientas.
+
+En 0.2.4, el auditor admite exports JSON multilínea y BOM, muestra advertencias de
+fechas ambiguas y verifica que sus lecturas coincidan con las fuentes inventariadas.
+Los nuevos informes usan `scan_version=2`; al incorporar este motor a un agente
+existente, vuelva a escanear antes de aplicar selecciones de un formato anterior.
 
 #### Usarlo desde el mismo chat
 
@@ -5264,14 +5488,14 @@ if __name__ == "__main__":
 
 ## 6. Pruebas y evidencia reproducible
 
-### Evidencia de validación — 0.2.3
+### Evidencia de validación — 0.2.4
 
-Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
+Fecha: 22 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 170 pruebas correctas con todos los extras |
-| Cobertura de sentencias | 89 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
+| pytest, red bloqueada por fixture | 206 pruebas correctas con todos los extras |
+| Cobertura de sentencias | 90 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 23 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
@@ -5323,6 +5547,15 @@ la plantilla ReAct .tmpl se prueba por comportamiento y no figura en ese porcent
 La consulta de comprobantes se prueba con otro escritor que mantiene cambios sin
 confirmar, y el resumen de una copia generada no crea una base al consultar sin datos.
 
+La versión 0.2.4 añade 36 casos del auditor: UTF-8/BOM, JSON multilínea y extensión
+mayúscula, IDs únicos, preguntas y negaciones, fechas explícitas/relativas, advertencias
+de vencimiento, coherencia del snapshot y versionado de informes. Se comprueban límites
+antes de guardar el informe o ampliar el registro, y el rechazo de encabezados que
+podrían heredar un remitente incorrecto. Las pruebas de dominio generadas también
+incluyen un encargo JSON multilínea con BOM y evidencia por línea interna.
+Los respaldos se comparan byte a byte con archivos CRLF, con y sin BOM, y con la
+huella before_sha256 del comprobante.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -5339,7 +5572,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.4-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
@@ -5387,12 +5620,14 @@ def offline(monkeypatch):
 ### `tests/test_audit.py`
 
 ````python
+import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-from agentcraft_forge.domains.audit import handle
+from agentcraft_forge.domains.audit import due_date, handle
 from agentcraft_forge.domains.common import DomainError
 
 
@@ -5480,7 +5715,9 @@ def test_old_sources_and_completed_matches_do_not_hide_candidates(tmp_path):
     assert report["skipped_lines_outside_window"] == 1
 
 
-def test_apply_requires_reviewed_selection_is_atomic_and_replayable(tmp_path):
+def test_apply_requires_reviewed_selection_is_atomic_and_replayable(
+    tmp_path, monkeypatch
+):
     request = fixture_workspace(tmp_path)
     (tmp_path / "journal/2026-10-20.md").write_text(
         "Me comprometí a llamar al proveedor mañana", encoding="utf-8"
@@ -5498,6 +5735,11 @@ def test_apply_requires_reviewed_selection_is_atomic_and_replayable(tmp_path):
     assert receipt["persisted"] is True
     assert (tmp_path / receipt["backup"]).read_text(encoding="utf-8") == before
     after = (tmp_path / "open-loops.md").read_text(encoding="utf-8")
+    assert handle(tmp_path, apply)["replayed"] is True
+    assert (tmp_path / "open-loops.md").read_text(encoding="utf-8") == after
+    from agentcraft_forge.domains import audit
+
+    monkeypatch.setattr(audit, "SCAN_VERSION", audit.SCAN_VERSION + 1)
     assert handle(tmp_path, apply)["replayed"] is True
     assert (tmp_path / "open-loops.md").read_text(encoding="utf-8") == after
 
@@ -5658,6 +5900,344 @@ def test_interrupted_apply_with_later_manual_edit_stays_uncertain(
         handle(tmp_path, apply)
     assert error.value.code == "operation_unconfirmed"
     assert canonical_path.read_text(encoding="utf-8") == after
+
+
+@pytest.mark.parametrize("suffix", ["json", "JSON"])
+def test_json_multiline_with_bom_preserves_assignment_and_message_lines(
+    tmp_path, suffix
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / f"whatsapp/messages.{suffix}").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "wa-multiline-001",
+                    "sender": "Persona B",
+                    "date": "2026-10-20",
+                    "text": "Compromisos para Lucía:\n1. Preparar plan de trabajo\n2. Revisar inventario de equipos\nFecha de entrega: 21 de octubre",
+                },
+                {
+                    "id": "wa-multiline-002",
+                    "sender": "Otra persona",
+                    "date": "2026-10-20",
+                    "text": "Mis pendientes:\n1. Preparar otra presentación",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8-sig",
+    )
+    report = handle(tmp_path, request)
+    assert len(report["candidates"]) == 2
+    assert [item["source"]["message_line"] for item in report["candidates"]] == [2, 3]
+    assert all(
+        item["source"]["message_id"] == "wa-multiline-001"
+        for item in report["candidates"]
+    )
+    assert all(item["due_date"] == "2026-10-21" for item in report["candidates"])
+    assert all(
+        item["deadline_source"]["message_line"] == 4 for item in report["candidates"]
+    )
+
+
+def test_repeated_json_message_ids_are_rejected(tmp_path):
+    request = fixture_workspace(tmp_path)
+    item = {
+        "id": "repeated-001",
+        "sender": "Lucía",
+        "date": "2026-10-20",
+        "text": "Tengo que revisar el contrato",
+    }
+    (tmp_path / "whatsapp/chat.json").write_text(
+        json.dumps([item, item]), encoding="utf-8"
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "No me comprometí a enviar contrato",
+        "No tengo que enviar contrato",
+        "Nunca acordé con el proveedor una entrega",
+        "¿Tengo que enviar contrato?",
+    ],
+)
+def test_negated_promises_and_questions_are_not_commitments(tmp_path, message):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(message, encoding="utf-8")
+    assert handle(tmp_path, request)["candidates"] == []
+
+
+def test_no_olvidar_remains_a_positive_reminder(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "No olvidar enviar el contrato", encoding="utf-8"
+    )
+    assert len(handle(tmp_path, request)["candidates"]) == 1
+
+
+@pytest.mark.parametrize(
+    "message,reference,expected",
+    [
+        ("Entregar pasado mañana", "2026-10-20", "2026-10-22"),
+        ("Entregar el próximo viernes", "2026-10-23", "2026-10-30"),
+        ("Entregar el 23/10/2026", "2026-10-20", "2026-10-23"),
+        ("Entregar mañana, 2026-10-21", "2026-10-20", "2026-10-21"),
+        ("Revisar rutina mañanera", "2026-10-20", None),
+        ("Entregar el 23 de octubre 2027", "2026-10-20", "2027-10-23"),
+        ("Entregar hoy por la mañana", "2026-10-20", "2026-10-20"),
+        ("Entregar esta mañana", "2026-10-20", "2026-10-20"),
+        ("Entregar mañana por la mañana", "2026-10-20", "2026-10-21"),
+    ],
+)
+def test_deadline_resolution_preserves_explicit_and_relative_meaning(
+    message, reference, expected
+):
+    assert due_date(message, date.fromisoformat(reference)) == expected
+
+
+@pytest.mark.parametrize(
+    "deadline",
+    [
+        "mañana o el viernes",
+        "2026-10-21 o 2026-10-22",
+        "31 de febrero de 2027",
+        "21 de enero",
+    ],
+)
+def test_uncertain_deadlines_keep_task_with_warning_without_inventing_date(
+    tmp_path, deadline
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        f"Tengo que enviar contrato el {deadline}", encoding="utf-8"
+    )
+    item = handle(tmp_path, request)["candidates"][0]
+    assert item["due_date"] is None
+    assert item["date_warnings"]
+
+
+def test_assignment_deadline_does_not_silently_override_item_date(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[20/10/2026, 10:00] Persona B: Compromisos para Lucía:\n1. Enviar contrato el 2026-10-21\nFecha de entrega: 2026-10-23\n",
+        encoding="utf-8",
+    )
+    item = handle(tmp_path, request)["candidates"][0]
+    assert item["due_date"] is None
+    assert item["date_warnings"]
+
+
+def test_undated_source_produces_one_diagnostic_per_file(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/note.md").write_text(
+        "Pendiente\nOtra nota\nTengo que enviar contrato\n", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    assert report["status"] == "incomplete"
+    assert len(report["errors"]) == 1
+    assert "3" in report["errors"][0]
+
+
+def test_sources_changed_during_scan_cannot_publish_report(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    source = tmp_path / "journal/2026-10-20.md"
+    source.write_text("Tengo que llamar al proveedor", encoding="utf-8")
+    original = audit.source_lines
+
+    def change(*args, **kwargs):
+        result = original(*args, **kwargs)
+        source.write_text("Otro contenido", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(audit, "source_lines", change)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "sources_changed"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_report_size_limit_is_shared_with_apply(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    monkeypatch.setattr(audit, "MAX_REPORT_BYTES", 100)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "report_too_large"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_duplicate_lines_in_one_json_message_have_distinct_candidate_ids(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "wa-duplicate-lines",
+                    "sender": "Lucía",
+                    "date": "2026-10-20",
+                    "text": "\nTengo que llamar al proveedor\nTengo que llamar al proveedor",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    items = handle(tmp_path, request)["candidates"]
+    assert len({item["id"] for item in items}) == 2
+    assert [item["source"]["message_line"] for item in items] == [2, 3]
+
+
+def test_plaintext_bom_does_not_hide_first_sender_or_date(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[20/10/2026, 10:00] Lucía: Tengo que llamar al proveedor", encoding="utf-8-sig"
+    )
+    assert len(handle(tmp_path, request)["candidates"]) == 1
+
+
+def test_invalid_message_header_date_has_controlled_source_error(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[31/02/2026, 10:00] Lucía: Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+
+
+def test_invalid_utf8_source_does_not_publish_partial_audit(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_bytes(b"\xff\xfeinvalid")
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_content_changed_after_inventory_is_rejected_at_read(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    source = tmp_path / "journal/2026-10-20.md"
+    source.write_text("Tengo que llamar al proveedor", encoding="utf-8")
+    original = audit.inventory
+
+    def change(root):
+        snapshot = original(root)
+        source.write_text("Tengo que enviar otro documento", encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(audit, "inventory", change)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "sources_changed"
+
+
+def test_new_scan_format_cannot_overwrite_previous_version_report(
+    tmp_path, monkeypatch
+):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    first = handle(tmp_path, request)
+    path = tmp_path / f".agentcraft/audit/scans/{first['scan_id']}.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(audit, "SCAN_VERSION", audit.SCAN_VERSION + 1)
+    second = handle(tmp_path, request)
+    assert second["scan_id"] != first["scan_id"]
+    assert path.read_bytes() == before
+    with pytest.raises(DomainError) as error:
+        handle(
+            tmp_path,
+            {
+                "action": "apply",
+                "scan_id": first["scan_id"],
+                "candidate_ids": [first["candidates"][0]["id"]],
+                "operation_id": "apply-old-format-001",
+            },
+        )
+    assert error.value.code == "unsupported_scan"
+
+
+def test_apply_cannot_grow_canonical_file_beyond_source_limit(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    canonical_path = tmp_path / "open-loops.md"
+    original = canonical_path.read_bytes()
+    monkeypatch.setattr(audit, "MAX_SOURCE_BYTES", len(original) + 1)
+    with pytest.raises(DomainError) as error:
+        handle(
+            tmp_path,
+            {
+                "action": "apply",
+                "scan_id": report["scan_id"],
+                "candidate_ids": [report["candidates"][0]["id"]],
+                "operation_id": "apply-size-limit-001",
+            },
+        )
+    assert error.value.code == "oversized_source"
+    assert canonical_path.read_bytes() == original
+    assert not (tmp_path / ".agentcraft/audit/receipts").exists()
+
+
+@pytest.mark.parametrize(
+    "header", ["[20/10/26, 11:00] Otra persona:", "20/10/2026, 11:00 - Otra persona:"]
+)
+def test_unsupported_header_cannot_inherit_previous_sender(tmp_path, header):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        f"[20/10/2026, 10:00] Lucía: Hola\n{header} Tengo que revisar contrato\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
+def test_backup_preserves_windows_line_endings_and_bom_byte_for_byte(
+    tmp_path, encoding
+):
+    request = fixture_workspace(tmp_path)
+    canonical_path = tmp_path / "open-loops.md"
+    original = "# Compromisos\r\n- [ ] [2026-09-01] Preparar informe técnico del cliente Andino\r\n".encode(
+        encoding
+    )
+    canonical_path.write_bytes(original)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    receipt = handle(
+        tmp_path,
+        {
+            "action": "apply",
+            "scan_id": report["scan_id"],
+            "candidate_ids": [report["candidates"][0]["id"]],
+            "operation_id": "apply-windows-backup-001",
+        },
+    )
+    backup = (tmp_path / receipt["backup"]).read_bytes()
+    assert backup == original
+    assert hashlib.sha256(backup).hexdigest() == receipt["before_sha256"]
 ````
 
 
@@ -6978,6 +7558,24 @@ pruebe restauración y gestione locks residuales antes de usarlas como servicio.
 
 
 ### Changelog
+
+#### 0.2.4 — 2026-10-22
+
+- Auditoría de JSON multilínea con BOM y extensión .JSON, IDs de mensaje únicos y
+  evidencia por línea interna. Encabezados no compatibles no heredan otro remitente.
+- Fechas explícitas DD/MM/AAAA, pasado mañana, próximo día semanal y mañana como
+  franja horaria. Fechas contradictorias o sin año dudoso conservan la tarea con
+  date_warnings y sin vencimiento inventado; se conserva la evidencia de la entrega.
+- Negaciones y preguntas reconocidas no se convierten en promesas; «no olvidar»
+  sigue siendo un recordatorio. Los diagnósticos sin fecha se agrupan por fuente.
+- Lecturas verificadas contra el snapshot y comprobación final antes de publicar.
+  Informes limitados a 2 MB y registro actualizado limitado a 1 MB antes de escribir.
+- Informes con scan_version=2 e IDs vinculados al formato. Un informe previo de otro
+  formato requiere volver a escanear; se conservan los reintentos de operaciones previas.
+- Respaldos fieles a los bytes originales, incluidos CRLF y BOM, con before_sha256
+  calculado sobre esa misma copia y revalidación del registro antes de preparar cambios.
+- Regresiones y pruebas en las copias generadas; formatos inválidos fallan con error
+  de dominio sin publicar un informe parcial ni modificar el registro canónico.
 
 #### 0.2.3 — 2026-10-21
 

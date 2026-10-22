@@ -1,11 +1,11 @@
-# Evidencia de validación — 0.2.3
+# Evidencia de validación — 0.2.4
 
-Fecha: 21 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
+Fecha: 22 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
 | Comprobación | Resultado |
 |---|---|
-| pytest, red bloqueada por fixture | 170 pruebas correctas con todos los extras |
-| Cobertura de sentencias | 89 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
+| pytest, red bloqueada por fixture | 206 pruebas correctas con todos los extras |
+| Cobertura de sentencias | 90 %; incluye los motores de dominio en su fuente, no las copias generadas como código instrumentado |
 | Ruff | Correcto en fuente, scripts y pruebas |
 | Black | 23 archivos de fuente, scripts y pruebas formateados |
 | Plantillas generadas | RAG, herramientas, multiagente, gastos y auditoría generan Python válido |
@@ -57,6 +57,15 @@ la plantilla ReAct .tmpl se prueba por comportamiento y no figura en ese porcent
 La consulta de comprobantes se prueba con otro escritor que mantiene cambios sin
 confirmar, y el resumen de una copia generada no crea una base al consultar sin datos.
 
+La versión 0.2.4 añade 36 casos del auditor: UTF-8/BOM, JSON multilínea y extensión
+mayúscula, IDs únicos, preguntas y negaciones, fechas explícitas/relativas, advertencias
+de vencimiento, coherencia del snapshot y versionado de informes. Se comprueban límites
+antes de guardar el informe o ampliar el registro, y el rechazo de encabezados que
+podrían heredar un remitente incorrecto. Las pruebas de dominio generadas también
+incluyen un encargo JSON multilínea con BOM y evidencia por línea interna.
+Los respaldos se comparan byte a byte con archivos CRLF, con y sin BOM, y con la
+huella before_sha256 del comprobante.
+
 El flujo completo se verificó con datos sintéticos en una carpeta de work, desde la
 CLI instalada con pipx y procesos separados. No se importó ni modificó prueba.zip,
 su gastos.db ni los datos originales del dispositivo de prueba del usuario.
@@ -73,7 +82,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.3-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.2.4-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```

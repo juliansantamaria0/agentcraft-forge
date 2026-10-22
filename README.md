@@ -8,7 +8,7 @@
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.3 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.4 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -72,6 +72,11 @@ no sustituyen pruebas de comportamiento ni una firma de distribución.
 En 0.2.3, consultar gastos o comprobantes abre la base en modo de solo lectura;
 consultar un proyecto vacío no crea archivos de datos. El runtime ReAct comprueba
 llamadas mal formadas e identificadores antes de ejecutar cada lote de herramientas.
+
+En 0.2.4, el auditor admite exports JSON multilínea y BOM, muestra advertencias de
+fechas ambiguas y verifica que sus lecturas coincidan con las fuentes inventariadas.
+Los nuevos informes usan `scan_version=2`; al incorporar este motor a un agente
+existente, vuelva a escanear antes de aplicar selecciones de un formato anterior.
 
 ## Usarlo desde el mismo chat
 

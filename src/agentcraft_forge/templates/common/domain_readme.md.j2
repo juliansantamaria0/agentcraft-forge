@@ -65,6 +65,14 @@ si un proceso se interrumpe, compruebe que terminó antes de retirar un lock res
 Las actualizaciones recientes detectadas se presentan para revisión; las heurísticas
 no demuestran que una tarea se haya completado ni que todas las promesas se detecten.
 Las negaciones, preguntas e intenciones futuras reconocidas no cuentan como progreso.
+Los exports JSON admiten BOM, extensión .JSON y mensajes multilínea con IDs únicos.
+source.message_line conserva la línea interna y deadline_source la evidencia de una
+entrega general. date_warnings señala vencimientos dudosos; due_date queda vacío sin
+eliminar la tarea. Revise esas advertencias antes de seleccionar candidatos.
+El informe usa scan_version=2: al incorporar este motor a un agente anterior, vuelva
+a escanear antes de aplicar un informe de otro formato. Las fuentes que cambian durante
+la lectura obligan a repetir la auditoría. El informe admite 2 MB y el registro 1 MB;
+los tamaños se comprueban antes de guardar o aplicar.
 [% endif %]
 
 ## Uso desde el chat

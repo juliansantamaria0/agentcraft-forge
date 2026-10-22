@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.3
+# Operación por chat y comprobantes — 0.2.4
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -197,6 +197,13 @@ y `[09:40, 21/10/2026] Nombre: texto`. Conserva el mensaje multilinea. El format
 [{"id":"mensaje-001","sender":"Persona","date":"2026-10-21","text":"Me comprometí a entregar el informe mañana"}]
 ```
 
+Los archivos UTF-8 pueden incluir BOM y la extensión JSON no distingue mayúsculas.
+El texto de cada mensaje JSON puede contener varias líneas; los IDs deben ser únicos
+dentro del archivo. En esa evidencia, line identifica el índice de mensaje y
+message_line su línea interna. En texto plano, line conserva la línea física del export.
+Encabezados con aspecto de mensaje pero fuera de los formatos soportados generan
+invalid_source; no se atribuyen al emisor anterior. El contenido debe ser UTF-8 válido.
+
 La solicitud de auditoría es:
 
 ```json
@@ -212,10 +219,34 @@ Las negaciones, preguntas y expresiones futuras reconocidas por las reglas no cu
 como progreso. Una frase ambigua puede necesitar revisión manual; el motor no prueba
 comprensión semántica completa ni marca automáticamente un compromiso como terminado.
 
+Los candidatos conservan date_warnings cuando el vencimiento es inválido, contiene
+varias fechas distintas o necesita un año explícito para evitar elegir una fecha
+pasada por error. En esos casos due_date es null y la tarea permanece disponible para
+revisión. Una fecha general del encargo no sustituye silenciosamente una fecha distinta
+del punto individual; deadline_source conserva la línea que declara la entrega.
+Seleccionar ese candidato no resuelve por sí solo la ambigüedad ni añade un tag due.
+Los meses sin año usan el año de la fuente solo cuando esa fecha no queda antes de ella.
+«Pasado mañana», «próximo viernes» y «hoy por la mañana» se distinguen con reglas;
+la interpretación sigue siendo heurística. Negaciones y preguntas reconocidas se omiten
+como promesas, mientras que «no olvidar» sigue admitiéndose como recordatorio.
+
 Scan guarda su informe local, pero persisted=false indica que no modificó el registro
 canónico. Fuentes ausentes o sin fecha producen incomplete. La ausencia de candidatos
 no demuestra sincronización total: el extractor sigue siendo heurístico. La identidad
 owner es declarada y no constituye autenticación.
+
+La lectura verifica el hash del contenido contra el inventario y vuelve a comprobar
+el inventario antes de guardar el informe. Si detecta cambios, devuelve sources_changed
+y exige volver a auditar. Los informes usan scan_version=2, incluido en su ID: un
+cambio de formato no sobrescribe el informe previo. Apply rechaza informes de otro
+formato con unsupported_scan; genere y revise uno nuevo al actualizar el motor.
+Un comprobante ya confirmado sigue siendo histórico y los reintentos conservan su ID.
+
+Los informes no pueden superar 2 MB. Si son demasiado grandes, reduzca la ventana o
+divida las fuentes; no se guarda un informe que luego apply no pueda leer. Las fuentes
+y el registro canónico admiten hasta 1 MB por archivo. Apply comprueba el tamaño del
+registro resultante antes de escribir. Las fuentes sin fecha generan un diagnóstico
+por archivo con su número de líneas, conservando el estado incomplete.
 
 Después de revisar y autorizar IDs concretos:
 
@@ -227,6 +258,9 @@ Apply comprueba que las fuentes y open-loops.md sigan en el mismo snapshot; rech
 posibles duplicados sin resolver y candidatos ajenos al informe. Guarda backup, escribe
 por reemplazo atómico y verifica el hash resultante antes de confirmar. Un journal
 pendiente permite recuperar un recibo si hubo interrupción después de escribir.
+El backup conserva los bytes originales, incluidos los saltos CRLF y el BOM, y su
+SHA-256 coincide con before_sha256. La copia del registro se verifica también contra
+el snapshot antes de preparar la actualización.
 La integridad local no impide que alguien con los mismos permisos modifique también
 los informes. No se pretende proporcionar aislamiento frente a atacantes locales.
 

@@ -1,5 +1,8 @@
 """Prueba de dominio del proyecto generado; no usa modelos ni datos del usuario."""
 
+[% if kind == 'audit' %]
+import json
+[% endif %]
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,8 +29,12 @@ class DomainContract(unittest.TestCase):
             (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
             (root / "journal").mkdir()
             (root / "journal/2026-10-21.md").write_text("Me comprometí a entregar el documento mañana.\n", encoding="utf-8")
+            (root / "whatsapp").mkdir()
+            (root / "whatsapp/messages.JSON").write_text(json.dumps([{"id": "test-wa-001", "sender": "Otra persona", "date": "2026-10-21", "text": "Compromisos para Persona de prueba:\n1. Revisar inventario de equipos\nFecha de entrega: 22 de octubre"}], ensure_ascii=False), encoding="utf-8-sig")
             result = handle(root, {"action": "scan", "owner": "Persona de prueba", "reference_date": "2026-10-21"})
             self.assertEqual(result["status"], "review_required")
             self.assertEqual(result["candidates"][0]["due_date"], "2026-10-22")
             self.assertFalse(result["persisted"])
+            self.assertEqual(len(result["candidates"]), 2)
+            self.assertEqual(result["candidates"][1]["source"]["message_line"], 2)
 [% endif %]

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.4 — 2026-10-22
+
+- Auditoría de JSON multilínea con BOM y extensión .JSON, IDs de mensaje únicos y
+  evidencia por línea interna. Encabezados no compatibles no heredan otro remitente.
+- Fechas explícitas DD/MM/AAAA, pasado mañana, próximo día semanal y mañana como
+  franja horaria. Fechas contradictorias o sin año dudoso conservan la tarea con
+  date_warnings y sin vencimiento inventado; se conserva la evidencia de la entrega.
+- Negaciones y preguntas reconocidas no se convierten en promesas; «no olvidar»
+  sigue siendo un recordatorio. Los diagnósticos sin fecha se agrupan por fuente.
+- Lecturas verificadas contra el snapshot y comprobación final antes de publicar.
+  Informes limitados a 2 MB y registro actualizado limitado a 1 MB antes de escribir.
+- Informes con scan_version=2 e IDs vinculados al formato. Un informe previo de otro
+  formato requiere volver a escanear; se conservan los reintentos de operaciones previas.
+- Respaldos fieles a los bytes originales, incluidos CRLF y BOM, con before_sha256
+  calculado sobre esa misma copia y revalidación del registro antes de preparar cambios.
+- Regresiones y pruebas en las copias generadas; formatos inválidos fallan con error
+  de dominio sin publicar un informe parcial ni modificar el registro canónico.
+
 ## 0.2.3 — 2026-10-21
 
 - Summary y receipt consultan SQLite mediante URI de solo lectura y un snapshot.

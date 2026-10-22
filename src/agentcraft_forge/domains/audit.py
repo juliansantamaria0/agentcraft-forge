@@ -35,9 +35,18 @@ UNCERTAIN_PROGRESS = re.compile(
     r"\b(?:no|nunca|tampoco|sin|voy a|vamos a|tengo que|debo|pendiente de)\b|[¿?]",
     re.IGNORECASE,
 )
+NEGATED_PROMISE = re.compile(
+    r"\b(?:no|nunca|tampoco)\s+(?:me\s+)?(?:comprometi|tengo que|quede de|acorde con|debo)\b|[¿?]"
+)
+SCAN_VERSION = 2
+MAX_REPORT_BYTES = 2_000_000
+MAX_SOURCE_BYTES = 1_000_000
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
 WHATSAPP_TIME_FIRST = re.compile(
     r"^\[\d{1,2}:\d{2}(?::\d{2})?,\s*(\d{1,2})/(\d{1,2})/(\d{4})\]\s*([^:]+):\s*(.*)$"
+)
+UNSUPPORTED_HEADER = re.compile(
+    r"^\[[^\]]*\d{1,2}:\d{2}[^\]]*\]\s*[^:]+:|^\d{1,4}[/-]\d{1,2}[/-]\d{2,4},?\s+\d{1,2}:\d{2}\s+-\s+[^:]+:"
 )
 STOP = {
     "para",
@@ -103,33 +112,68 @@ def similarity(left: str, right: str) -> float:
 
 def due_date(value: str, reference: date) -> str | None:
     lower = normalize(value)
-    explicit = re.search(r"\b\d{4}-\d{2}-\d{2}\b", lower)
-    if explicit:
-        return iso_date(explicit.group())
-    if "manana" in lower:
-        return (reference + timedelta(days=1)).isoformat()
-    if "hoy" in lower:
-        return reference.isoformat()
-    for index, day in enumerate(WEEKDAYS):
-        if re.search(rf"\b{day}\b", lower):
-            return (
-                reference + timedelta(days=(index - reference.weekday()) % 7)
-            ).isoformat()
-    spanish = re.search(
-        r"\b(\d{1,2}) de (" + "|".join(MONTHS[1:]) + r")(?: de (\d{4}))?\b", lower
-    )
-    if spanish:
-        try:
-            return date(
+    dates = set()
+    try:
+        dates.update(
+            date.fromisoformat(token)
+            for token in re.findall(r"\b\d{4}-\d{2}-\d{2}\b", lower)
+        )
+        for day_part, month_part, year in re.findall(
+            r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", lower
+        ):
+            dates.add(date(int(year), int(month_part), int(day_part)))
+        if re.search(r"\besta manana\b", lower):
+            dates.add(reference)
+        lower = re.sub(r"\b(?:esta|por la|de la) manana\b", " ", lower)
+        if re.search(r"\bpasado manana\b", lower):
+            dates.add(reference + timedelta(days=2))
+            lower = re.sub(r"\bpasado manana\b", " ", lower)
+        if re.search(r"\bmanana\b", lower):
+            dates.add(reference + timedelta(days=1))
+        if re.search(r"\bhoy\b", lower):
+            dates.add(reference)
+        for index, day in enumerate(WEEKDAYS):
+            if re.search(rf"\b{day}\b", lower):
+                offset = (index - reference.weekday()) % 7
+                if offset == 0 and re.search(rf"\bproximo {day}\b", lower):
+                    offset = 7
+                dates.add(reference + timedelta(days=offset))
+        for spanish in re.finditer(
+            r"\b(\d{1,2}) de ("
+            + "|".join(MONTHS[1:])
+            + r")(?:\s+(?:del?\s+)?(\d{4}))?\b",
+            lower,
+        ):
+            resolved = date(
                 int(spanish[3] or reference.year),
                 MONTHS.index(spanish[2]),
                 int(spanish[1]),
-            ).isoformat()
-        except ValueError as exc:
-            raise DomainError(
-                "invalid_date", "Una fuente contiene un vencimiento inválido."
-            ) from exc
-    return None
+            )
+            if not spanish[3] and resolved < reference:
+                raise DomainError(
+                    "ambiguous_deadline",
+                    "Indique el año del vencimiento; la fecha sin año quedaría antes de la fuente.",
+                )
+            dates.add(resolved)
+    except DomainError:
+        raise
+    except (ValueError, OverflowError) as exc:
+        raise DomainError(
+            "invalid_date", "Una fuente contiene un vencimiento inválido."
+        ) from exc
+    if len(dates) > 1:
+        raise DomainError(
+            "ambiguous_deadline",
+            "Hay varias fechas distintas; revise cuál corresponde al vencimiento.",
+        )
+    return next(iter(dates)).isoformat() if dates else None
+
+
+def resolve_deadline(value: str, reference: date) -> tuple[str | None, list[str]]:
+    try:
+        return due_date(value, reference), []
+    except DomainError as exc:
+        return None, [str(exc)]
 
 
 def inventory(root: Path) -> dict[str, str]:
@@ -137,7 +181,7 @@ def inventory(root: Path) -> dict[str, str]:
     result = {}
     canonical_file = safe_path(root, "open-loops.md")
     if canonical_file.is_file():
-        if canonical_file.stat().st_size > 1_000_000:
+        if canonical_file.stat().st_size > MAX_SOURCE_BYTES:
             raise DomainError(
                 "oversized_source", "El registro de compromisos supera 1 MB."
             )
@@ -150,7 +194,7 @@ def inventory(root: Path) -> dict[str, str]:
             relative = path.relative_to(root).as_posix()
             safe_path(root, relative)
             if path.is_file() and path.suffix.lower() in {".md", ".txt", ".json"}:
-                if path.stat().st_size > 1_000_000:
+                if path.stat().st_size > MAX_SOURCE_BYTES:
                     raise DomainError("oversized_source", "Una fuente supera 1 MB.")
                 result[relative] = file_hash(path)
                 if len(result) > 200:
@@ -160,27 +204,63 @@ def inventory(root: Path) -> dict[str, str]:
     return result
 
 
-def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
-    content = safe_path(root, relative).read_text(encoding="utf-8")
-    if relative.endswith(".json"):
+def read_source(root: Path, relative: str, expected_hash: str | None = None) -> str:
+    with safe_path(root, relative).open("rb") as stream:
+        content_bytes = stream.read(MAX_SOURCE_BYTES + 1)
+    if len(content_bytes) > MAX_SOURCE_BYTES:
+        raise DomainError("oversized_source", "Una fuente supera 1 MB.")
+    if (
+        expected_hash is not None
+        and hashlib.sha256(content_bytes).hexdigest() != expected_hash
+    ):
+        raise DomainError(
+            "sources_changed", "Una fuente cambió durante la lectura; vuelva a auditar."
+        )
+    try:
+        return content_bytes.decode("utf-8-sig")
+    except UnicodeError as exc:
+        raise DomainError(
+            "invalid_source", "Las fuentes deben ser texto UTF-8 válido."
+        ) from exc
+
+
+def source_lines(
+    root: Path, relative: str, owner: str, expected_hash: str | None = None
+) -> list[dict]:
+    content = read_source(root, relative, expected_hash)
+    if Path(relative).suffix.lower() == ".json":
         messages = parse_json(content)
         if not isinstance(messages, list) or len(messages) > 5000:
             raise DomainError(
                 "invalid_source", "El JSON de WhatsApp debe ser una lista de mensajes."
             )
         result = []
+        seen_ids = set()
         for index, item in enumerate(messages, 1):
             fields(item, {"id", "sender", "date", "text"})
-            result.append(
-                {
-                    "line": index,
-                    "text": text(item["text"], 6000),
-                    "sender": text(item["sender"], 100),
-                    "date": iso_date(item["date"]),
-                    "message_id": text(item["id"], 128),
-                    "message_start": True,
-                }
-            )
+            identifier = text(item["id"], 128)
+            if identifier in seen_ids:
+                raise DomainError(
+                    "invalid_source",
+                    "El export JSON contiene identificadores de mensaje repetidos.",
+                )
+            seen_ids.add(identifier)
+            metadata = {
+                "line": index,
+                "sender": text(item["sender"], 100),
+                "date": iso_date(item["date"]),
+                "message_id": identifier,
+            }
+            text(item["text"], 6000)
+            for message_line, body in enumerate(item["text"].splitlines(), 1):
+                result.append(
+                    {
+                        **metadata,
+                        "text": body.strip(),
+                        "message_line": message_line,
+                        "message_start": message_line == 1,
+                    }
+                )
         return result
     filename_date = re.search(r"\d{4}-\d{2}-\d{2}", Path(relative).name)
     current = {
@@ -191,10 +271,28 @@ def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     result = []
     for index, line in enumerate(content.splitlines(), 1):
         match = WHATSAPP.match(line) or WHATSAPP_TIME_FIRST.match(line)
+        if (
+            not match
+            and relative.startswith("whatsapp/")
+            and UNSUPPORTED_HEADER.match(line)
+        ):
+            raise DomainError(
+                "invalid_source",
+                "Encabezado de WhatsApp no compatible; use los formatos con año de cuatro cifras documentados.",
+            )
         if match:
+            try:
+                message_date = date(
+                    int(match[3]), int(match[2]), int(match[1])
+                ).isoformat()
+            except ValueError as exc:
+                raise DomainError(
+                    "invalid_source",
+                    "El export contiene una fecha de mensaje inválida.",
+                ) from exc
             current = {
                 "sender": match[4].strip(),
-                "date": date(int(match[3]), int(match[2]), int(match[1])).isoformat(),
+                "date": message_date,
                 "message_id": str(index),
             }
             line = match[5]
@@ -209,13 +307,28 @@ def source_lines(root: Path, relative: str, owner: str) -> list[dict]:
     return result
 
 
-def parse_loops(root: Path, reference: date, stale_days: int) -> list[dict]:
+def source_evidence(relative: str, entry: dict, source_hash: str) -> dict:
+    return {
+        "file": relative,
+        "line": entry["line"],
+        "source_sha256": source_hash,
+        "message_id": entry["message_id"],
+        "message_line": entry.get("message_line"),
+        "sender": entry["sender"],
+        "source_date": entry["date"],
+        "excerpt": entry["text"][:1500],
+    }
+
+
+def parse_loops(
+    root: Path, reference: date, stale_days: int, expected_hash: str | None = None
+) -> list[dict]:
     path = safe_path(root, "open-loops.md")
     if not path.is_file():
         return []
     loops = []
     for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
+        read_source(root, "open-loops.md", expected_hash).splitlines(), 1
     ):
         match = re.match(r"^\s*[-*]\s+\[([ xX])\]\s*(.+)$", line)
         if not match:
@@ -264,23 +377,22 @@ def scan(root: Path, request: dict) -> dict:
     inputs = [name for name in sources if name != "open-loops.md"]
     if not inputs:
         errors.append("No hay fuentes de journal o WhatsApp para revisar.")
-    loops = parse_loops(root, reference, stale_days)
+    loops = parse_loops(root, reference, stale_days, sources.get("open-loops.md"))
     candidates = []
     skipped_old = 0
     ignored_other_senders = 0
     for relative in inputs:
         assignment_owner = None
         assignment_candidates = []
-        for entry in source_lines(root, relative, owner):
+        undated_count = 0
+        for entry in source_lines(root, relative, owner, sources[relative]):
             body = entry["text"]
             if entry["message_start"]:
                 assignment_owner = None
                 assignment_candidates = []
             if not entry["date"]:
                 if body:
-                    errors.append(
-                        f"Fuente sin fecha comprobable: {relative}:{entry['line']}."
-                    )
+                    undated_count += 1
                 continue
             source_date = date.fromisoformat(entry["date"])
             if source_date > reference or source_date < reference - timedelta(
@@ -295,9 +407,32 @@ def scan(root: Path, request: dict) -> dict:
                 continue
             deadline = re.search(r"fecha de entrega\s*:\s*(.+)", body, re.IGNORECASE)
             if deadline and assignment_owner:
-                due = due_date(deadline[1], source_date)
+                due, warnings = resolve_deadline(deadline[1], source_date)
                 for candidate in assignment_candidates:
-                    candidate["due_date"] = due
+                    candidate["deadline_source"] = source_evidence(
+                        relative, entry, sources[relative]
+                    )
+                    if (
+                        warnings
+                        or candidate["date_warnings"]
+                        or (
+                            due
+                            and candidate["due_date"]
+                            and due != candidate["due_date"]
+                        )
+                    ):
+                        candidate["due_date"] = None
+                        candidate["date_warnings"] = list(
+                            dict.fromkeys(
+                                [
+                                    *candidate["date_warnings"],
+                                    *warnings,
+                                    "Revise las fechas del encargo y de la línea de entrega.",
+                                ]
+                            )
+                        )
+                    elif due:
+                        candidate["due_date"] = due
                 continue
             is_assignment = assignment_owner is not None and bool(
                 re.match(r"^(?:\d+[.)]|[-*])\s+", body)
@@ -306,15 +441,7 @@ def scan(root: Path, request: dict) -> dict:
             if responsible is None or normalize(responsible) != normalize(owner):
                 ignored_other_senders += 1
                 continue
-            evidence = {
-                "file": relative,
-                "line": entry["line"],
-                "source_sha256": sources[relative],
-                "message_id": entry["message_id"],
-                "sender": entry["sender"],
-                "source_date": entry["date"],
-                "excerpt": body[:1500],
-            }
+            evidence = source_evidence(relative, entry, sources[relative])
             if PROGRESS.search(body) and not UNCERTAIN_PROGRESS.search(normalize(body)):
                 for loop in loops:
                     if (
@@ -329,13 +456,17 @@ def scan(root: Path, request: dict) -> dict:
                 continue
             if not is_assignment and not PROMISE.search(body):
                 continue
+            if not is_assignment and NEGATED_PROMISE.search(normalize(body)):
+                continue
             task = re.sub(r"^(?:\d+[.)]|[-*])\s+", "", body).strip()
             task = " ".join(task.split())[:1000]
+            due, warnings = resolve_deadline(task, source_date)
             candidate = {
                 "id": digest(
                     {
                         "file": relative,
                         "line": entry["line"],
+                        "message_line": entry.get("message_line"),
                         "text": task,
                         "owner": owner,
                     }
@@ -344,7 +475,8 @@ def scan(root: Path, request: dict) -> dict:
                 "owner": owner,
                 "kind": "request_to_owner" if is_assignment else "commitment_candidate",
                 "acceptance_confirmed": False,
-                "due_date": due_date(task, source_date),
+                "due_date": due,
+                "date_warnings": warnings,
                 "source": evidence,
                 "possible_matches": [
                     {
@@ -359,6 +491,10 @@ def scan(root: Path, request: dict) -> dict:
             candidates.append(candidate)
             if is_assignment:
                 assignment_candidates.append(candidate)
+        if undated_count:
+            errors.append(
+                f"Fuente sin fecha comprobable: {relative} ({undated_count} líneas sin fecha)."
+            )
     for loop in loops:
         loop["status"] = (
             "completed"
@@ -375,6 +511,7 @@ def scan(root: Path, request: dict) -> dict:
         )
     # El ID vincula la solicitud normalizada a un snapshot; no se ocultan coincidencias.
     identity = {
+        "scan_version": SCAN_VERSION,
         "owner": owner,
         "reference_date": reference.isoformat(),
         "stale_days": stale_days,
@@ -383,6 +520,7 @@ def scan(root: Path, request: dict) -> dict:
     }
     scan_id = digest(identity)
     report = {
+        "scan_version": SCAN_VERSION,
         "status": "incomplete" if errors else "review_required",
         "scan_id": scan_id,
         "created_at": now(),
@@ -401,8 +539,19 @@ def scan(root: Path, request: dict) -> dict:
             "Cada candidato requiere revisión; una petición de un tercero no confirma aceptación.",
         ],
     }
+    content = canonical(report)
+    if len(content.encode("utf-8")) > MAX_REPORT_BYTES:
+        raise DomainError(
+            "report_too_large",
+            "El informe supera 2 MB; reduzca la ventana o divida las fuentes antes de auditar.",
+        )
+    if inventory(root) != sources:
+        raise DomainError(
+            "sources_changed",
+            "Las fuentes cambiaron durante la auditoría; vuelva a auditar.",
+        )
     target = safe_path(root, f".agentcraft/audit/scans/{scan_id}.json")
-    atomic_text(target, canonical(report))
+    atomic_text(target, content)
     return report
 
 
@@ -465,11 +614,20 @@ def apply(root: Path, request: dict) -> dict:
                         "Hay una operación pendiente y el registro cambió; revise el comprobante y el backup antes de continuar.",
                     )
         report_path = safe_path(root, f".agentcraft/audit/scans/{scan_id}.json")
-        if not report_path.is_file() or report_path.stat().st_size > 2_000_000:
+        if not report_path.is_file() or report_path.stat().st_size > MAX_REPORT_BYTES:
             raise DomainError(
                 "invalid_scan", "No existe un informe local de tamaño válido."
             )
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = parse_json(report_path.read_text(encoding="utf-8-sig"))
+        if (
+            not isinstance(report, dict)
+            or type(report.get("scan_version")) is not int
+            or report["scan_version"] != SCAN_VERSION
+        ):
+            raise DomainError(
+                "unsupported_scan",
+                "El informe pertenece a otro formato de auditoría; vuelva a escanear y revisar.",
+            )
         if report["status"] != "review_required":
             raise DomainError(
                 "incomplete_scan", "No se puede aplicar una auditoría incompleta."
@@ -490,7 +648,14 @@ def apply(root: Path, request: dict) -> dict:
                 "possible_duplicate",
                 "Hay coincidencias con tareas existentes; resuélvalas antes de aplicar.",
             )
-        original = canonical_path.read_text(encoding="utf-8")
+        original_bytes = canonical_path.read_bytes()
+        before_hash = hashlib.sha256(original_bytes).hexdigest()
+        if before_hash != report["source_snapshot"].get("open-loops.md"):
+            raise DomainError(
+                "stale_scan",
+                "El registro cambió durante la lectura; vuelva a auditar y revisar.",
+            )
+        original = original_bytes.decode("utf-8")
         entries = []
         for candidate in selected:
             due = f" [due: {candidate['due_date']}]" if candidate["due_date"] else ""
@@ -503,6 +668,11 @@ def apply(root: Path, request: dict) -> dict:
             + "\n".join(entries)
             + "\n"
         )
+        if len(updated.encode("utf-8")) > MAX_SOURCE_BYTES:
+            raise DomainError(
+                "oversized_source",
+                "El registro actualizado superaría 1 MB; reorganice el registro antes de aplicar.",
+            )
         backup = safe_path(root, f".agentcraft/audit/backups/{digest(identifier)}.md")
         atomic_text(backup, original)
         receipt = {
@@ -514,7 +684,7 @@ def apply(root: Path, request: dict) -> dict:
             "scan_id": scan_id,
             "candidate_ids": ids,
             "count": len(ids),
-            "before_sha256": file_hash(canonical_path),
+            "before_sha256": before_hash,
             "after_sha256": hashlib.sha256(updated.encode()).hexdigest(),
             "backup": backup.relative_to(root).as_posix(),
             "created_at": now(),

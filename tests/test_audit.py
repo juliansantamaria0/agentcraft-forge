@@ -1,9 +1,11 @@
+import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-from agentcraft_forge.domains.audit import handle
+from agentcraft_forge.domains.audit import due_date, handle
 from agentcraft_forge.domains.common import DomainError
 
 
@@ -91,7 +93,9 @@ def test_old_sources_and_completed_matches_do_not_hide_candidates(tmp_path):
     assert report["skipped_lines_outside_window"] == 1
 
 
-def test_apply_requires_reviewed_selection_is_atomic_and_replayable(tmp_path):
+def test_apply_requires_reviewed_selection_is_atomic_and_replayable(
+    tmp_path, monkeypatch
+):
     request = fixture_workspace(tmp_path)
     (tmp_path / "journal/2026-10-20.md").write_text(
         "Me comprometí a llamar al proveedor mañana", encoding="utf-8"
@@ -109,6 +113,11 @@ def test_apply_requires_reviewed_selection_is_atomic_and_replayable(tmp_path):
     assert receipt["persisted"] is True
     assert (tmp_path / receipt["backup"]).read_text(encoding="utf-8") == before
     after = (tmp_path / "open-loops.md").read_text(encoding="utf-8")
+    assert handle(tmp_path, apply)["replayed"] is True
+    assert (tmp_path / "open-loops.md").read_text(encoding="utf-8") == after
+    from agentcraft_forge.domains import audit
+
+    monkeypatch.setattr(audit, "SCAN_VERSION", audit.SCAN_VERSION + 1)
     assert handle(tmp_path, apply)["replayed"] is True
     assert (tmp_path / "open-loops.md").read_text(encoding="utf-8") == after
 
@@ -269,3 +278,341 @@ def test_interrupted_apply_with_later_manual_edit_stays_uncertain(
         handle(tmp_path, apply)
     assert error.value.code == "operation_unconfirmed"
     assert canonical_path.read_text(encoding="utf-8") == after
+
+
+@pytest.mark.parametrize("suffix", ["json", "JSON"])
+def test_json_multiline_with_bom_preserves_assignment_and_message_lines(
+    tmp_path, suffix
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / f"whatsapp/messages.{suffix}").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "wa-multiline-001",
+                    "sender": "Persona B",
+                    "date": "2026-10-20",
+                    "text": "Compromisos para Lucía:\n1. Preparar plan de trabajo\n2. Revisar inventario de equipos\nFecha de entrega: 21 de octubre",
+                },
+                {
+                    "id": "wa-multiline-002",
+                    "sender": "Otra persona",
+                    "date": "2026-10-20",
+                    "text": "Mis pendientes:\n1. Preparar otra presentación",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8-sig",
+    )
+    report = handle(tmp_path, request)
+    assert len(report["candidates"]) == 2
+    assert [item["source"]["message_line"] for item in report["candidates"]] == [2, 3]
+    assert all(
+        item["source"]["message_id"] == "wa-multiline-001"
+        for item in report["candidates"]
+    )
+    assert all(item["due_date"] == "2026-10-21" for item in report["candidates"])
+    assert all(
+        item["deadline_source"]["message_line"] == 4 for item in report["candidates"]
+    )
+
+
+def test_repeated_json_message_ids_are_rejected(tmp_path):
+    request = fixture_workspace(tmp_path)
+    item = {
+        "id": "repeated-001",
+        "sender": "Lucía",
+        "date": "2026-10-20",
+        "text": "Tengo que revisar el contrato",
+    }
+    (tmp_path / "whatsapp/chat.json").write_text(
+        json.dumps([item, item]), encoding="utf-8"
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "No me comprometí a enviar contrato",
+        "No tengo que enviar contrato",
+        "Nunca acordé con el proveedor una entrega",
+        "¿Tengo que enviar contrato?",
+    ],
+)
+def test_negated_promises_and_questions_are_not_commitments(tmp_path, message):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(message, encoding="utf-8")
+    assert handle(tmp_path, request)["candidates"] == []
+
+
+def test_no_olvidar_remains_a_positive_reminder(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "No olvidar enviar el contrato", encoding="utf-8"
+    )
+    assert len(handle(tmp_path, request)["candidates"]) == 1
+
+
+@pytest.mark.parametrize(
+    "message,reference,expected",
+    [
+        ("Entregar pasado mañana", "2026-10-20", "2026-10-22"),
+        ("Entregar el próximo viernes", "2026-10-23", "2026-10-30"),
+        ("Entregar el 23/10/2026", "2026-10-20", "2026-10-23"),
+        ("Entregar mañana, 2026-10-21", "2026-10-20", "2026-10-21"),
+        ("Revisar rutina mañanera", "2026-10-20", None),
+        ("Entregar el 23 de octubre 2027", "2026-10-20", "2027-10-23"),
+        ("Entregar hoy por la mañana", "2026-10-20", "2026-10-20"),
+        ("Entregar esta mañana", "2026-10-20", "2026-10-20"),
+        ("Entregar mañana por la mañana", "2026-10-20", "2026-10-21"),
+    ],
+)
+def test_deadline_resolution_preserves_explicit_and_relative_meaning(
+    message, reference, expected
+):
+    assert due_date(message, date.fromisoformat(reference)) == expected
+
+
+@pytest.mark.parametrize(
+    "deadline",
+    [
+        "mañana o el viernes",
+        "2026-10-21 o 2026-10-22",
+        "31 de febrero de 2027",
+        "21 de enero",
+    ],
+)
+def test_uncertain_deadlines_keep_task_with_warning_without_inventing_date(
+    tmp_path, deadline
+):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        f"Tengo que enviar contrato el {deadline}", encoding="utf-8"
+    )
+    item = handle(tmp_path, request)["candidates"][0]
+    assert item["due_date"] is None
+    assert item["date_warnings"]
+
+
+def test_assignment_deadline_does_not_silently_override_item_date(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[20/10/2026, 10:00] Persona B: Compromisos para Lucía:\n1. Enviar contrato el 2026-10-21\nFecha de entrega: 2026-10-23\n",
+        encoding="utf-8",
+    )
+    item = handle(tmp_path, request)["candidates"][0]
+    assert item["due_date"] is None
+    assert item["date_warnings"]
+
+
+def test_undated_source_produces_one_diagnostic_per_file(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/note.md").write_text(
+        "Pendiente\nOtra nota\nTengo que enviar contrato\n", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    assert report["status"] == "incomplete"
+    assert len(report["errors"]) == 1
+    assert "3" in report["errors"][0]
+
+
+def test_sources_changed_during_scan_cannot_publish_report(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    source = tmp_path / "journal/2026-10-20.md"
+    source.write_text("Tengo que llamar al proveedor", encoding="utf-8")
+    original = audit.source_lines
+
+    def change(*args, **kwargs):
+        result = original(*args, **kwargs)
+        source.write_text("Otro contenido", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(audit, "source_lines", change)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "sources_changed"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_report_size_limit_is_shared_with_apply(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    monkeypatch.setattr(audit, "MAX_REPORT_BYTES", 100)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "report_too_large"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_duplicate_lines_in_one_json_message_have_distinct_candidate_ids(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "wa-duplicate-lines",
+                    "sender": "Lucía",
+                    "date": "2026-10-20",
+                    "text": "\nTengo que llamar al proveedor\nTengo que llamar al proveedor",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    items = handle(tmp_path, request)["candidates"]
+    assert len({item["id"] for item in items}) == 2
+    assert [item["source"]["message_line"] for item in items] == [2, 3]
+
+
+def test_plaintext_bom_does_not_hide_first_sender_or_date(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[20/10/2026, 10:00] Lucía: Tengo que llamar al proveedor", encoding="utf-8-sig"
+    )
+    assert len(handle(tmp_path, request)["candidates"]) == 1
+
+
+def test_invalid_message_header_date_has_controlled_source_error(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        "[31/02/2026, 10:00] Lucía: Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+
+
+def test_invalid_utf8_source_does_not_publish_partial_audit(tmp_path):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_bytes(b"\xff\xfeinvalid")
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+def test_content_changed_after_inventory_is_rejected_at_read(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    source = tmp_path / "journal/2026-10-20.md"
+    source.write_text("Tengo que llamar al proveedor", encoding="utf-8")
+    original = audit.inventory
+
+    def change(root):
+        snapshot = original(root)
+        source.write_text("Tengo que enviar otro documento", encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(audit, "inventory", change)
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "sources_changed"
+
+
+def test_new_scan_format_cannot_overwrite_previous_version_report(
+    tmp_path, monkeypatch
+):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    first = handle(tmp_path, request)
+    path = tmp_path / f".agentcraft/audit/scans/{first['scan_id']}.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(audit, "SCAN_VERSION", audit.SCAN_VERSION + 1)
+    second = handle(tmp_path, request)
+    assert second["scan_id"] != first["scan_id"]
+    assert path.read_bytes() == before
+    with pytest.raises(DomainError) as error:
+        handle(
+            tmp_path,
+            {
+                "action": "apply",
+                "scan_id": first["scan_id"],
+                "candidate_ids": [first["candidates"][0]["id"]],
+                "operation_id": "apply-old-format-001",
+            },
+        )
+    assert error.value.code == "unsupported_scan"
+
+
+def test_apply_cannot_grow_canonical_file_beyond_source_limit(tmp_path, monkeypatch):
+    from agentcraft_forge.domains import audit
+
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    canonical_path = tmp_path / "open-loops.md"
+    original = canonical_path.read_bytes()
+    monkeypatch.setattr(audit, "MAX_SOURCE_BYTES", len(original) + 1)
+    with pytest.raises(DomainError) as error:
+        handle(
+            tmp_path,
+            {
+                "action": "apply",
+                "scan_id": report["scan_id"],
+                "candidate_ids": [report["candidates"][0]["id"]],
+                "operation_id": "apply-size-limit-001",
+            },
+        )
+    assert error.value.code == "oversized_source"
+    assert canonical_path.read_bytes() == original
+    assert not (tmp_path / ".agentcraft/audit/receipts").exists()
+
+
+@pytest.mark.parametrize(
+    "header", ["[20/10/26, 11:00] Otra persona:", "20/10/2026, 11:00 - Otra persona:"]
+)
+def test_unsupported_header_cannot_inherit_previous_sender(tmp_path, header):
+    request = fixture_workspace(tmp_path)
+    (tmp_path / "whatsapp/chat.txt").write_text(
+        f"[20/10/2026, 10:00] Lucía: Hola\n{header} Tengo que revisar contrato\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "invalid_source"
+    assert not (tmp_path / ".agentcraft/audit/scans").exists()
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
+def test_backup_preserves_windows_line_endings_and_bom_byte_for_byte(
+    tmp_path, encoding
+):
+    request = fixture_workspace(tmp_path)
+    canonical_path = tmp_path / "open-loops.md"
+    original = "# Compromisos\r\n- [ ] [2026-09-01] Preparar informe técnico del cliente Andino\r\n".encode(
+        encoding
+    )
+    canonical_path.write_bytes(original)
+    (tmp_path / "journal/2026-10-20.md").write_text(
+        "Tengo que llamar al proveedor", encoding="utf-8"
+    )
+    report = handle(tmp_path, request)
+    receipt = handle(
+        tmp_path,
+        {
+            "action": "apply",
+            "scan_id": report["scan_id"],
+            "candidate_ids": [report["candidates"][0]["id"]],
+            "operation_id": "apply-windows-backup-001",
+        },
+    )
+    backup = (tmp_path / receipt["backup"]).read_bytes()
+    assert backup == original
+    assert hashlib.sha256(backup).hexdigest() == receipt["before_sha256"]
