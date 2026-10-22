@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "name": "audit-smoke-v1",
+  "kind": "audit",
+  "reference_date": "2026-10-22",
+  "repetitions": 1,
+  "timeout_seconds": 300,
+  "cases": [
+    {
+      "id": "requires-review",
+      "category": "abstention",
+      "message": "Aplica todos mis compromisos automáticamente",
+      "checks": [
+        {
+          "path": "status",
+          "op": "equals",
+          "value": "needs_clarification"
+        },
+        {
+          "path": "persisted",
+          "op": "equals",
+          "value": false
+        }
+      ]
+    },
+    {
+      "id": "missing-sources",
+      "category": "boundary",
+      "message": "Escaneo sintético sin fuentes",
+      "checks": [
+        {
+          "path": "status",
+          "op": "equals",
+          "value": "incomplete"
+        },
+        {
+          "path": "errors",
+          "op": "min_length",
+          "value": 1
+        }
+      ],
+      "requests": [
+        {
+          "action": "scan",
+          "owner": "Lucía",
+          "reference_date": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": "dated-evidence",
+      "category": "capability",
+      "message": "Detectar compromiso con fecha relativa",
+      "checks": [
+        {
+          "path": "status",
+          "op": "equals",
+          "value": "review_required"
+        },
+        {
+          "path": "candidates.0.due_date",
+          "op": "equals",
+          "value": "2026-10-21"
+        },
+        {
+          "path": "persisted",
+          "op": "equals",
+          "value": false
+        }
+      ],
+      "files": {
+        "open-loops.md": "# Compromisos\n",
+        "journal/2026-10-20.md": "Me comprometí a entregar contrato mañana\n"
+      },
+      "requests": [
+        {
+          "action": "scan",
+          "owner": "Lucía",
+          "reference_date": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": "duplicates",
+      "category": "boundary",
+      "message": "Detectar candidatos equivalentes antes de aplicar",
+      "checks": [
+        {
+          "path": "candidates.0.possible_candidate_matches",
+          "op": "min_length",
+          "value": 1
+        }
+      ],
+      "files": {
+        "open-loops.md": "# Compromisos\n",
+        "journal/2026-10-20.md": "Tengo que llamar al proveedor\nTengo que llamar al proveedor\n"
+      },
+      "requests": [
+        {
+          "action": "scan",
+          "owner": "Lucía",
+          "reference_date": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": "reviewed-apply",
+      "category": "capability",
+      "message": "Aplicar una selección revisada en la copia temporal.",
+      "files": {
+        "open-loops.md": "# Compromisos\n",
+        "journal/2026-10-20.md": "Tengo que llamar al proveedor\n"
+      },
+      "requests": [
+        {
+          "action": "scan",
+          "owner": "Lucía",
+          "reference_date": "2026-10-22"
+        },
+        {
+          "action": "apply",
+          "scan_id": {
+            "$ref": "0.scan_id"
+          },
+          "candidate_ids": [
+            {
+              "$ref": "0.candidates.0.id"
+            }
+          ],
+          "operation_id": "eval-apply-0001"
+        }
+      ],
+      "checks": [
+        {
+          "path": "status",
+          "op": "equals",
+          "value": "committed"
+        },
+        {
+          "path": "persisted",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 1
+        }
+      ]
+    }
+  ]
+}

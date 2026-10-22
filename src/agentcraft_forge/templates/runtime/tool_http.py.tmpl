@@ -1,0 +1,19 @@
+"""Lecturas HTTP acotadas."""
+
+import json
+
+import httpx
+
+
+def read_json(client: httpx.Client, url: str, params: dict | None = None) -> dict:
+    with client.stream("GET", url, params=params) as response:
+        response.raise_for_status()
+        body = bytearray()
+        for part in response.iter_bytes():
+            body.extend(part)
+            if len(body) > 64_000:
+                raise ValueError("La respuesta externa supera 64 KB.")
+        result = json.loads(body)
+    if not isinstance(result, dict):
+        raise ValueError("Se esperaba un objeto JSON.")
+    return result

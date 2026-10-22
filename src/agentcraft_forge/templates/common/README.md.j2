@@ -70,3 +70,24 @@ El manifiesto de configuración se lee de /app/agentcraft.json dentro de la imag
 Los eventos operativos se escriben en stderr, con run_id compartido, duración y
 estado, sin preguntas ni resultados privados. stdout conserva los resultados JSON.
 
+
+[% if modern %]
+## Alcance y evaluaciones
+
+Lea scope.json para conocer las capacidades y argumentos autorizados de este
+proyecto. Su propósito no crea integraciones adicionales.
+
+```console
+agentcraft evaluate --project .
+```
+
+Este comando prepara la suite sintética de evals/smoke.json sin ejecutar el agente.
+[% if kind in ['expenses', 'audit'] %]
+Para ejecutar esos casos en datos temporales, use agentcraft evaluate --project . --run.
+[% else %]
+La ejecución real requiere --live, tarifas por modelo y --max-cost-usd.
+[% endif %]
+Los informes se pueden guardar en .agentcraft con --report y no se sobrescriben.
+Consulte la guía de evaluaciones de AgentCraft Forge antes de interpretar métricas
+como calidad del modelo. Revise las respuestas abiertas manualmente.
+[% endif %]

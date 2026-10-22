@@ -7,6 +7,8 @@ from pathlib import Path, PurePosixPath
 
 from jinja2 import Environment, StrictUndefined
 
+from agentcraft_forge.catalog import TEMPLATES as CATALOG
+from agentcraft_forge.catalog import TOOLS, dependencies, scope
 from agentcraft_forge.schema import AgentSpec, Kind
 
 TEMPLATES = {
@@ -48,17 +50,32 @@ def render(spec: AgentSpec) -> dict[str, str]:
         block_end_string="%]",
         keep_trailing_newline=True,
     )
-    context = {"name": spec.name, "kind": spec.plan.kind.value}
+    modern = spec.template_version == "3"
+    context = {
+        "name": spec.name,
+        "kind": spec.plan.kind.value,
+        "modern": modern,
+        "dependencies": dependencies(spec.plan.kind, spec.plan.tools),
+    }
     result = {
         destination: env.from_string(
             root.joinpath("common", source).read_text(encoding="utf-8")
         ).render(**context)
         for destination, source in TEMPLATES.items()
     }
-    domain = spec.plan.kind in {Kind.expenses, Kind.audit}
-    runtime = ["__init__.py"] if domain else COMMON_RUNTIME + SPECIFIC[spec.plan.kind]
+    domain = CATALOG[spec.plan.kind].domain
+    specific = (
+        list(CATALOG[spec.plan.kind].runtime) if modern else SPECIFIC[spec.plan.kind]
+    )
+    runtime = ["__init__.py"] if domain else COMMON_RUNTIME + specific
+    if modern and spec.plan.kind == Kind.tools:
+        runtime += [TOOLS[name].resource for name in spec.plan.tools]
     for name in runtime:
-        data = root.joinpath("runtime", name + ".tmpl").read_text(encoding="utf-8")
+        data = root.joinpath(
+            "runtime",
+            ("tools_legacy.py" if name == "tools.py" and not modern else name)
+            + ".tmpl",
+        ).read_text(encoding="utf-8")
         result["src/agent_app/" + name] = data
     if domain:
         resources = files("agentcraft_forge.domains")
@@ -101,7 +118,30 @@ def render(spec: AgentSpec) -> dict[str, str]:
         result[
             ".gitignore"
         ] += "\n# Datos personales del auditor\njournal/*\n!journal/.gitkeep\nwhatsapp/*\n!whatsapp/.gitkeep\nopen-loops.md\n"
-    if spec.template_version == "2":
+    if modern:
+        result["scope.json"] = (
+            json.dumps(scope(spec), ensure_ascii=False, indent=2) + "\n"
+        )
+        if spec.plan.kind == Kind.tools:
+            factories = {name: TOOLS[name].factory for name in spec.plan.tools}
+            configuration = {
+                name: TOOLS[name].configuration for name in spec.plan.tools
+            }
+            result["src/agent_app/tool_registry.py"] = (
+                "FACTORIES = "
+                + repr(factories)
+                + "\n"
+                + "CONFIGURATION = "
+                + repr(configuration)
+                + "\n"
+            )
+        result["src/agent_app/evaluate.py"] = root.joinpath(
+            "runtime", "evaluate.py.tmpl"
+        ).read_text(encoding="utf-8")
+        result["evals/smoke.json"] = root.joinpath(
+            "evals", spec.plan.kind.value + ".json"
+        ).read_text(encoding="utf-8")
+    if spec.template_version in {"2", "3"}:
         result[".agents/skills/agentcraft-project/SKILL.md"] = env.from_string(
             root.joinpath("common", "project_skill.md.j2").read_text(encoding="utf-8")
         ).render(**context)

@@ -74,7 +74,9 @@ def build_crew(llm: Any):
     )
 
 
-def run_multi(settings: Settings, requirements: str) -> Proposal:
+def run_multi(
+    settings: Settings, requirements: str, usage: dict | None = None
+) -> Proposal:
     if not requirements.strip() or len(requirements) > 16000:
         raise ValueError("Los requisitos deben tener entre 1 y 16000 caracteres.")
     from crewai import LLM
@@ -88,6 +90,8 @@ def run_multi(settings: Settings, requirements: str) -> Proposal:
     )
     with operation("model.team"):
         result = build_crew(llm).kickoff(inputs={"requirements": requirements})
+    if usage is not None and result.token_usage is not None:
+        usage.update(result.token_usage.model_dump())
     if not isinstance(result.pydantic, Proposal):
         raise ValueError("CrewAI no produjo la propuesta estructurada esperada.")
     return result.pydantic

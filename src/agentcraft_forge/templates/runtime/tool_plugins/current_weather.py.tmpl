@@ -1,0 +1,46 @@
+"""Herramienta registrada de solo lectura."""
+
+import json
+from typing import Literal
+
+import httpx
+from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict
+
+from agent_app.tool_http import read_json
+from agent_app.tool_registry import CONFIGURATION
+
+COORDINATES = CONFIGURATION["current_weather"]["cities"]
+City = Literal[tuple(COORDINATES)]
+
+
+class WeatherArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: City
+
+
+def build(client: httpx.Client):
+    @tool(args_schema=WeatherArgs)
+    def current_weather(city: City) -> str:
+        """Consulta temperatura y viento de una ciudad autorizada usando Open-Meteo."""
+        lat, lon = COORDINATES[city]
+        data = read_json(
+            client,
+            "https://api.open-meteo.com/v1/forecast",
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,wind_speed_10m",
+            },
+        )
+        return json.dumps(
+            {
+                "city": city,
+                "current": data.get("current"),
+                "units": data.get("current_units"),
+                "source": "https://open-meteo.com/",
+            },
+            ensure_ascii=False,
+        )
+
+    return current_weather

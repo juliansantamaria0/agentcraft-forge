@@ -48,6 +48,11 @@ def main(python: str) -> None:
                 "--json",
             )
             target = root / f"smoke-{kind}"
+            preview = json.loads(invoke("evaluate", "--project", str(target)))
+            if preview["mode"] != "plan" or preview["model_execution_requested"]:
+                raise RuntimeError("Preparar evaluaciones no debe ejecutar modelos.")
+            if not (target / "scope.json").is_file() or not preview["suite"]["cases"]:
+                raise RuntimeError("Faltan alcance o casos de evaluación en el wheel.")
             invoke("build", "--project", str(target))
             output = invoke("run", "--project", str(target), "--dry-run")
             if json.loads(output)["model_invoked"] is not False:
@@ -81,7 +86,7 @@ def main(python: str) -> None:
                 if result.returncode:
                     raise RuntimeError(result.stderr)
     print(
-        "Wheel instalado: cinco plantillas, adaptador, origen y pruebas de dominio correctos."
+        "Wheel instalado: cinco plantillas, alcance, suites, adaptador, origen y pruebas de dominio correctos."
     )
 
 

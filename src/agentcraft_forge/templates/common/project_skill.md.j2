@@ -41,3 +41,10 @@ el saldo actual. No invente presupuesto, conversión, entregas ni conexión What
 Use agentcraft run y las capacidades declaradas; no anuncie herramientas que no
 existan. Las credenciales se configuran fuera del chat en el entorno del proyecto.
 [% endif %]
+
+[% if modern %]
+Lea scope.json antes de anunciar capacidades. Prepare las evaluaciones con
+agentcraft evaluate --project RUTA. La ejecución de modelos reales requiere una
+petición explícita para --live, tarifas declaradas y presupuesto; no la infiera de
+un pedido de preparar casos. Los checks automáticos no sustituyen la revisión humana.
+[% endif %]

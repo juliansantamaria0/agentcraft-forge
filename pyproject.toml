@@ -24,7 +24,7 @@ version = {attr = "agentcraft_forge.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-agentcraft_forge = ["templates/common/*.j2", "templates/runtime/*.tmpl", "templates/runtime/rag/*.tmpl", "templates/tests/*.tmpl", "templates/chat/*.md"]
+agentcraft_forge = ["templates/common/*.j2", "templates/runtime/*.tmpl", "templates/runtime/rag/*.tmpl", "templates/runtime/tool_plugins/*.tmpl", "templates/evals/*.json", "templates/tests/*.tmpl", "templates/chat/*.md"]
 
 [dependency-groups]
 dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.14,<1", "black>=26,<27", "build>=1.3,<2", "twine>=6,<7", "pipx>=1.7,<2", "qdrant-client==1.19.1", "langchain-qdrant==1.1.0", "langchain-text-splitters==1.1.3"]
@@ -45,6 +45,7 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S603"]
 "src/agentcraft_forge/project.py" = ["S603"]
+"src/agentcraft_forge/evaluation.py" = ["S603"]
 
 [tool.black]
 line-length = 88

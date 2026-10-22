@@ -1,0 +1,78 @@
+"""Herramientas de solo lectura con destinos y argumentos restringidos."""
+
+import json
+from typing import Literal
+
+import httpx
+from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel, ConfigDict
+
+RepositoryName = Literal["qdrant/qdrant", "langchain-ai/langchain", "crewAIInc/crewAI"]
+City = Literal["Bogota", "Madrid"]
+COORDINATES = {"Bogota": (4.711, -74.0721), "Madrid": (40.4168, -3.7038)}
+
+
+class RepositoryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    repository: RepositoryName
+
+
+class WeatherArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    city: City
+
+
+def read_json(client: httpx.Client, url: str, params: dict | None = None) -> dict:
+    with client.stream("GET", url, params=params) as response:
+        response.raise_for_status()
+        body = bytearray()
+        for part in response.iter_bytes():
+            body.extend(part)
+            if len(body) > 64_000:
+                raise ValueError("La respuesta externa supera 64 KB.")
+        result = json.loads(body)
+    if not isinstance(result, dict):
+        raise ValueError("Se esperaba un objeto JSON.")
+    return result
+
+
+def build_tools(client: httpx.Client) -> list[BaseTool]:
+    @tool(args_schema=RepositoryArgs)
+    def repository_info(repository: RepositoryName) -> str:
+        """Lee metadatos públicos de uno de los tres repositorios autorizados."""
+        data = read_json(client, f"https://api.github.com/repos/{repository}")
+        return json.dumps(
+            {
+                "repository": repository,
+                "description": str(data.get("description") or "")[:500],
+                "stars": data.get("stargazers_count"),
+                "default_branch": data.get("default_branch"),
+                "source": f"https://github.com/{repository}",
+            },
+            ensure_ascii=False,
+        )
+
+    @tool(args_schema=WeatherArgs)
+    def current_weather(city: City) -> str:
+        """Consulta temperatura y viento de Bogota o Madrid usando Open-Meteo."""
+        lat, lon = COORDINATES[city]
+        data = read_json(
+            client,
+            "https://api.open-meteo.com/v1/forecast",
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,wind_speed_10m",
+            },
+        )
+        return json.dumps(
+            {
+                "city": city,
+                "current": data.get("current"),
+                "units": data.get("current_units"),
+                "source": "https://open-meteo.com/",
+            },
+            ensure_ascii=False,
+        )
+
+    return [repository_info, current_weather]

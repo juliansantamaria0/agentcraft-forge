@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — 2026-10-22
+
+- Vista previa offline con agentcraft plan y alcance exacto antes de confirmar init.
+- Catálogo central para capacidades, límites, configuración permitida, recursos y dependencias.
+  Las herramientas se generan mediante un registro de fábricas y módulos independientes.
+- Plantilla v3 con scope.json y suites sintéticas para las cinco arquitecturas;
+  se conserva el contrato de archivos y validación de proyectos v1/v2.
+- Evaluador optativo con reglas, huellas, repeticiones, abstenciones, revisión humana,
+  tiempos, tokens y costes estimados. Sin ejecución por defecto; los modelos reales
+  requieren --live, tarifas por modelo y presupuesto explícitos.
+- Casos de dominio en carpetas temporales; herramientas con respuestas HTTP fijas
+  declaradas y RAG con corpus sintético/Qdrant en memoria.
+- README centrado en una demostración breve; instalación y operación detalladas en docs/usage.md.
+- Las evaluaciones con modelos reales quedan preparadas y pendientes de ejecución.
+
 ## 0.2.5 — 2026-10-22
 
 - Fechas de gastos escritas y hace N días; referencias temporales no resueltas

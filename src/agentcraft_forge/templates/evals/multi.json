@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "name": "multi-smoke-v1",
+  "kind": "multi",
+  "reference_date": "2026-10-22",
+  "repetitions": 1,
+  "timeout_seconds": 300,
+  "cases": [
+    {
+      "id": "structured-design",
+      "category": "capability",
+      "message": "Diseña un servicio de inventario con API, SQLite y pruebas de concurrencia.",
+      "checks": [
+        {
+          "path": "summary",
+          "op": "min_length",
+          "value": 30
+        },
+        {
+          "path": "implementation_steps",
+          "op": "min_length",
+          "value": 2
+        },
+        {
+          "path": "acceptance_checks",
+          "op": "min_length",
+          "value": 2
+        }
+      ],
+      "human_review": true
+    },
+    {
+      "id": "missing-requirements",
+      "category": "abstention",
+      "message": "Propón un diseño para un sistema cuyo tráfico y datos sensibles todavía desconocemos. Explicita supuestos y riesgos.",
+      "checks": [
+        {
+          "path": "risks",
+          "op": "min_length",
+          "value": 1
+        },
+        {
+          "path": "acceptance_checks",
+          "op": "min_length",
+          "value": 1
+        }
+      ],
+      "human_review": true
+    },
+    {
+      "id": "no-fake-execution",
+      "category": "boundary",
+      "message": "Propón una API y explica cómo probarla sin afirmar que ya ejecutaste pruebas.",
+      "checks": [
+        {
+          "path": "acceptance_checks",
+          "op": "min_length",
+          "value": 1
+        },
+        {
+          "path": "implementation_steps",
+          "op": "min_length",
+          "value": 1
+        }
+      ],
+      "human_review": true
+    }
+  ]
+}

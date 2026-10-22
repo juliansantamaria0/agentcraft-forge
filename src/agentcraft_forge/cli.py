@@ -13,6 +13,8 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from agentcraft_forge import __version__
+from agentcraft_forge.catalog import scope
+from agentcraft_forge.evaluation import Price, evaluate, load_suite, read_json_file
 from agentcraft_forge.generator import generate
 from agentcraft_forge.integration import doctor as inspect_installation
 from agentcraft_forge.integration import inspect_project, install_skill
@@ -83,6 +85,7 @@ def init(
         )
         if not json_output:
             console.print(table)
+            print_scope(spec)
         if not yes and not Confirm.ask("¿Generar este proyecto?", default=True):
             raise typer.Abort()
         target = generate(spec, directory)
@@ -95,6 +98,7 @@ def init(
                         "kind": spec.plan.kind.value,
                         "manifest": "agentcraft.json",
                         "provenance": "agentcraft.provenance.json",
+                        "scope": scope(spec),
                     },
                     ensure_ascii=False,
                 )
@@ -120,6 +124,114 @@ def init(
                 f"Error: {type(exc).__name__}. Revise nombre, plan y destino.",
                 style="red",
             )
+        raise typer.Exit(1) from None
+
+
+def print_scope(spec):
+    details = scope(spec)
+    console.print(escape(details["summary"]))
+    for capability in details["capabilities"]:
+        console.print("• " + escape(capability["name"] + ": " + capability["scope"]))
+        if capability["arguments"]:
+            console.print(
+                escape(json.dumps(capability["arguments"], ensure_ascii=False))
+            )
+    for limit in details["limits"]:
+        console.print("• " + escape(limit))
+    console.print(escape(details["purpose_is_configuration"]))
+
+
+@app.command()
+def plan(
+    name: Annotated[str, typer.Option(help="Nombre del proyecto")],
+    purpose: Annotated[str, typer.Option(help="Propósito y requisitos")],
+    kind: Annotated[Kind | None, typer.Option()] = None,
+):
+    """Vista previa offline del alcance exacto; no crea archivos ni llama modelos."""
+    try:
+        spec = design(name, purpose, kind)
+        typer.echo(
+            json.dumps(
+                {"spec": spec.model_dump(mode="json"), "scope": scope(spec)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    except ValueError:
+        raise typer.BadParameter(
+            "Revise nombre, propósito y tipo de plantilla."
+        ) from None
+
+
+@app.command("evaluate")
+def evaluate_command(
+    project: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
+    suite: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    run_cases: Annotated[
+        bool, typer.Option("--run", help="Ejecuta casos deterministas locales")
+    ] = False,
+    live: Annotated[
+        bool, typer.Option("--live", help="Autoriza llamadas a modelos reales")
+    ] = False,
+    rates: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="Tarifas USD por millón de tokens, por modelo",
+        ),
+    ] = None,
+    max_cost_usd: Annotated[
+        float | None,
+        typer.Option(help="Presupuesto entre intentos; no es un límite de facturación"),
+    ] = None,
+    report: Annotated[
+        Path | None, typer.Option(help="Guardar JSON sin sobrescribir archivos")
+    ] = None,
+):
+    """Prepara la evaluación por defecto; ejecutar requiere --run o --live."""
+    try:
+        if report is not None:
+            if report.exists() or any(
+                p.is_symlink() for p in (report, *report.absolute().parents)
+            ):
+                raise ValueError("El informe ya existe o su destino está enlazado.")
+        prices = (
+            {
+                name: Price.model_validate(value)
+                for name, value in read_json_file(rates).items()
+            }
+            if rates
+            else {}
+        )
+        result = evaluate(
+            project,
+            load_suite(suite or project / "evals/smoke.json"),
+            run=run_cases,
+            live=live,
+            rates=prices,
+            max_cost_usd=max_cost_usd,
+        )
+        serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+        if report is not None:
+            report.parent.mkdir(parents=True, exist_ok=True)
+            with report.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(serialized + "\n")
+        typer.echo(serialized)
+        if result.get("status") == "incomplete" or any(
+            not t["passed"] for t in result["trials"]
+        ):
+            raise typer.Exit(2)
+    except (ValueError, OSError) as exc:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": type(exc).__name__,
+                    "message": "Revise suite, build, opciones de ejecución, tarifas y destino del informe.",
+                }
+            )
+        )
         raise typer.Exit(1) from None
 
 

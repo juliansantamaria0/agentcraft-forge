@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "name": "expenses-smoke-v1",
+  "kind": "expenses",
+  "reference_date": "2026-10-22",
+  "repetitions": 1,
+  "timeout_seconds": 300,
+  "cases": [
+    {
+      "id": "amount-date",
+      "category": "capability",
+      "message": "Gasté 15k en almuerzo hoy",
+      "checks": [
+        {
+          "path": "request.expenses.0.amount",
+          "op": "equals",
+          "value": 15000
+        },
+        {
+          "path": "request.expenses.0.expense_date",
+          "op": "equals",
+          "value": "2026-10-22"
+        },
+        {
+          "path": "persisted",
+          "op": "equals",
+          "value": false
+        }
+      ]
+    },
+    {
+      "id": "ambiguous",
+      "category": "abstention",
+      "message": "Gasté algo en comida",
+      "checks": [
+        {
+          "path": "status",
+          "op": "equals",
+          "value": "needs_clarification"
+        },
+        {
+          "path": "persisted",
+          "op": "equals",
+          "value": false
+        }
+      ]
+    },
+    {
+      "id": "relative-date",
+      "category": "boundary",
+      "message": "Gasté 12k en transporte hace 2 días",
+      "checks": [
+        {
+          "path": "request.expenses.0.expense_date",
+          "op": "equals",
+          "value": "2026-10-20"
+        }
+      ]
+    },
+    {
+      "id": "idempotent-budget",
+      "category": "capability",
+      "message": "Secuencia sintética de gastos, reintento y presupuesto",
+      "checks": [
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 1
+        },
+        {
+          "path": "total",
+          "op": "equals",
+          "value": 15000
+        },
+        {
+          "path": "remaining_budget",
+          "op": "equals",
+          "value": 85000
+        }
+      ],
+      "requests": [
+        {
+          "action": "set_budget",
+          "operation_id": "eval-budget-0001",
+          "month": "2026-10",
+          "amount": 100000,
+          "currency": "COP"
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        }
+      ]
+    },
+    {
+      "id": "void-record",
+      "category": "capability",
+      "message": "Anular un registro en datos sintéticos.",
+      "requests": [
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "void",
+          "operation_id": "eval-void-0001",
+          "expense_ids": [
+            {
+              "$ref": "0.record_ids.0"
+            }
+          ],
+          "reason": "Corrección sintética"
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        }
+      ],
+      "checks": [
+        {
+          "path": "total",
+          "op": "equals",
+          "value": 0
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 0
+        }
+      ]
+    }
+  ]
+}

@@ -5,7 +5,8 @@ import os
 from collections.abc import Callable
 
 from agentcraft_forge import __version__
-from agentcraft_forge.schema import CAPABILITIES, AgentSpec, Kind, Plan
+from agentcraft_forge.catalog import capabilities
+from agentcraft_forge.schema import AgentSpec, Kind, Plan
 
 
 def offline_plan(purpose: str, kind: Kind | None = None) -> Plan:
@@ -30,7 +31,7 @@ def offline_plan(purpose: str, kind: Kind | None = None) -> Plan:
             kind = Kind.tools
     return Plan(
         kind=kind,
-        tools=sorted(CAPABILITIES[kind]),
+        tools=sorted(capabilities(kind)),
         architecture_notes=[
             "Modelo y credenciales configurados por entorno; sin secretos en el código.",
             "Capacidades limitadas al catálogo de la plantilla seleccionada.",
@@ -59,7 +60,7 @@ def ai_plan(purpose: str, kind: Kind | None = None) -> Plan:
     context = {
         "purpose": purpose,
         "requested_kind": kind.value if kind else None,
-        "catalog": {k.value: sorted(v) for k, v in CAPABILITIES.items()},
+        "catalog": {k.value: sorted(capabilities(k)) for k in Kind},
     }
     result = model.with_structured_output(Plan).invoke(
         [
@@ -90,5 +91,9 @@ def design(
     baseline = AgentSpec(name=name, purpose=purpose, plan=offline_plan(purpose, kind))
     plan = (designer or ai_plan)(purpose, kind) if ai else baseline.plan
     return AgentSpec(
-        name=name, purpose=purpose, plan=plan, generator_version=__version__
+        name=name,
+        purpose=purpose,
+        plan=plan,
+        generator_version=__version__,
+        template_version="3",
     )

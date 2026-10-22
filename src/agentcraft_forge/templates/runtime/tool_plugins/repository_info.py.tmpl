@@ -1,0 +1,37 @@
+"""Herramienta registrada de solo lectura."""
+
+import json
+from typing import Literal
+
+import httpx
+from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict
+
+from agent_app.tool_http import read_json
+from agent_app.tool_registry import CONFIGURATION
+
+RepositoryName = Literal[tuple(CONFIGURATION["repository_info"]["repositories"])]
+
+
+class RepositoryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    repository: RepositoryName
+
+
+def build(client: httpx.Client):
+    @tool(args_schema=RepositoryArgs)
+    def repository_info(repository: RepositoryName) -> str:
+        """Lee metadatos públicos de uno de los repositorios autorizados."""
+        data = read_json(client, f"https://api.github.com/repos/{repository}")
+        return json.dumps(
+            {
+                "repository": repository,
+                "description": str(data.get("description") or "")[:500],
+                "stars": data.get("stargazers_count"),
+                "default_branch": data.get("default_branch"),
+                "source": f"https://github.com/{repository}",
+            },
+            ensure_ascii=False,
+        )
+
+    return repository_info

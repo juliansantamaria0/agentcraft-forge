@@ -1,39 +1,23 @@
 """El modelo elige capacidades de un catálogo; nunca instrucciones ejecutables."""
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
-class Kind(StrEnum):
-    rag = "rag"
-    tools = "tools"
-    multi = "multi"
-    expenses = "expenses"
-    audit = "audit"
-
-
-CAPABILITIES = {
-    Kind.rag: {"search_documents"},
-    Kind.tools: {"repository_info", "current_weather"},
-    Kind.multi: {"analyze", "design", "review"},
-    Kind.expenses: {"record_expenses", "summarize_expenses", "set_budget"},
-    Kind.audit: {"scan_commitments", "apply_reviewed_commitments"},
-}
+from agentcraft_forge.catalog import CAPABILITIES as CAPABILITIES
+from agentcraft_forge.catalog import Kind, capabilities
 
 
 class Plan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Kind
-    tools: list[str] = Field(min_length=1, max_length=3)
+    tools: list[str] = Field(min_length=1, max_length=20)
     architecture_notes: list[str] = Field(min_length=1, max_length=6)
 
     @model_validator(mode="after")
     def approved_capabilities(self):
-        if not set(self.tools).issubset(CAPABILITIES[self.kind]):
+        if not set(self.tools).issubset(capabilities(self.kind)):
             raise ValueError("El plan solicita una capacidad fuera del catálogo.")
-        if self.kind != Kind.tools and set(self.tools) != CAPABILITIES[self.kind]:
+        if self.kind != Kind.tools and set(self.tools) != capabilities(self.kind):
             raise ValueError("La plantilla requiere todas sus capacidades declaradas.")
         if len(self.tools) != len(set(self.tools)):
             raise ValueError("No se permiten capacidades duplicadas.")
@@ -48,7 +32,7 @@ class AgentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: int = Field(default=1, ge=1, le=1)
-    template_version: str = Field(default="2", pattern=r"^[12]$")
+    template_version: str = Field(default="2", pattern=r"^[123]$")
     generator_version: str | None = Field(default=None, pattern=r"^\d+\.\d+\.\d+$")
     name: str = Field(
         min_length=2, max_length=48, pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"

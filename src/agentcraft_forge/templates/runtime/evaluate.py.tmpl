@@ -1,0 +1,244 @@
+"""Ejecutor optativo de casos sintéticos; no usa datos persistentes del usuario."""
+
+import contextlib
+import json
+import os
+import sys
+from datetime import date
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
+
+def model_with_usage(settings, usage, state):
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    from agent_app.providers import chat_model
+
+    class Meter(BaseCallbackHandler):
+        def on_chat_model_start(self, serialized, messages, **kwargs):
+            state["started"] += 1
+
+        def on_llm_end(self, response, **kwargs):
+            state["finished"] += 1
+            try:
+                value = response.generations[0][0].message.usage_metadata
+                if value is None:
+                    raise ValueError("Missing usage")
+                usage.append(
+                    {
+                        "model": settings.chat_model,
+                        "input_tokens": value["input_tokens"],
+                        "output_tokens": value["output_tokens"],
+                    }
+                )
+            except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+                state["known"] = False
+
+        def on_llm_error(self, error, **kwargs):
+            state["known"] = False
+
+    return chat_model(settings).model_copy(update={"callbacks": [Meter()]})
+
+
+def embeddings_with_usage(settings, usage, state):
+    from agent_app.providers import embeddings_model
+
+    embeddings = embeddings_model(settings)
+    delegate = embeddings.client
+
+    class Meter:
+        def create(self, *args, **kwargs):
+            try:
+                result = delegate.create(*args, **kwargs)
+                data = result if isinstance(result, dict) else result.model_dump()
+                tokens = data.get("usage", {}).get("total_tokens")
+                if type(tokens) is not int or tokens < 0:
+                    state["known"] = False
+                else:
+                    usage.append(
+                        {
+                            "model": settings.embedding_model,
+                            "input_tokens": tokens,
+                            "output_tokens": 0,
+                        }
+                    )
+                return result
+            except Exception:
+                state["known"] = False
+                raise
+
+    embeddings.client = Meter()
+    return embeddings
+
+
+def fixture_response(request):
+    import httpx
+
+    if request.url.host == "api.open-meteo.com":
+        return httpx.Response(
+            200,
+            json={
+                "current": {"temperature_2m": 21, "wind_speed_10m": 5},
+                "current_units": {"temperature_2m": "°C", "wind_speed_10m": "km/h"},
+            },
+        )
+    if request.url.host == "api.github.com":
+        return httpx.Response(
+            200,
+            json={
+                "description": "Repositorio sintético de evaluación",
+                "stargazers_count": 123,
+                "default_branch": "main",
+            },
+        )
+    raise ValueError("Destino fuera de las fixtures de evaluación.")
+
+
+def resolve_request(value, previous):
+    """Referencias de datos a resultados previos; nunca expresiones ejecutables."""
+    if isinstance(value, dict):
+        if set(value) == {"$ref"}:
+            result = previous
+            for part in value["$ref"].split("."):
+                result = result[int(part)] if isinstance(result, list) else result[part]
+            return result
+        return {key: resolve_request(item, previous) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_request(item, previous) for item in value]
+    return value
+
+
+def execute(spec, payload, root, usage, state):
+    case = payload["case"]
+    kind = spec["plan"]["kind"]
+    if kind in {"expenses", "audit"}:
+        from agent_app.domain import handle, propose
+
+        for name, content in case["files"].items():
+            target = root / name
+            if not target.resolve().is_relative_to(root.resolve()):
+                raise ValueError("Fixture fuera de la carpeta temporal.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        results = []
+        for request in case["requests"]:
+            results.append(handle(root, resolve_request(request, results)))
+        if results:
+            return {**results[-1], "step_results": results}
+        return propose(case["message"], date.fromisoformat(payload["reference_date"]))
+
+    from agent_app.settings import load_settings
+
+    settings = load_settings(Path.cwd() / ".env")
+    settings = settings.model_copy(
+        update={
+            "max_steps": spec["max_steps"],
+            "max_tool_calls": spec["max_tool_calls"],
+        }
+    )
+    models = {settings.crew_model} if kind == "multi" else {settings.chat_model}
+    if kind == "rag":
+        models.add(settings.embedding_model)
+    if not models.issubset(set(payload["priced_models"])):
+        raise ValueError("Faltan tarifas para los modelos configurados.")
+    context = json.dumps(
+        {"purpose": spec["purpose"], "history": [], "question": case["message"]},
+        ensure_ascii=False,
+    )
+    if kind == "multi":
+        from agent_app.multi import run_multi
+
+        metrics = {}
+        result = run_multi(settings, context, usage=metrics)
+        if (
+            metrics.get("successful_requests", 0) < 1
+            or metrics.get("total_tokens", 0) < 1
+        ):
+            state["known"] = False
+        else:
+            usage.append(
+                {
+                    "model": settings.crew_model,
+                    "input_tokens": metrics["prompt_tokens"],
+                    "output_tokens": metrics["completion_tokens"],
+                }
+            )
+        return result.model_dump()
+    model = model_with_usage(settings, usage, state)
+    if kind == "tools":
+        import httpx
+
+        from agent_app.react import run_react
+        from agent_app.tools import build_tools
+
+        with httpx.Client(
+            transport=httpx.MockTransport(fixture_response),
+            timeout=settings.timeout,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            tools = [
+                tool
+                for tool in build_tools(client)
+                if tool.name in spec["plan"]["tools"]
+            ]
+            return run_react(
+                model,
+                tools,
+                context,
+                max_steps=settings.max_steps,
+                max_tool_calls=settings.max_tool_calls,
+                deadline_seconds=settings.timeout * 3,
+            ).model_dump()
+    from qdrant_client import QdrantClient
+
+    from agent_app.rag.ingest import ingest
+    from agent_app.rag.service import answer_question
+    from agent_app.rag.store import vector_store
+
+    documents = root / "corpus"
+    documents.mkdir()
+    for index, content in enumerate(case["documents"]):
+        (documents / f"source-{index}.md").write_text(content, encoding="utf-8")
+    embeddings = embeddings_with_usage(settings, usage, state)
+    with QdrantClient(location=":memory:") as client:
+        ingest(client, "evaluation", embeddings, documents, "evaluation")
+        store = vector_store(client, "evaluation", embeddings)
+        return answer_question(
+            store, model, context, "evaluation", settings.top_k, settings.min_score
+        ).model_dump()
+
+
+def main():
+    payload = json.loads(sys.stdin.read(1_000_001))
+    spec = json.loads((Path.cwd() / "agentcraft.json").read_text(encoding="utf-8"))
+    usage = []
+    state = {"known": True, "started": 0, "finished": 0}
+    try:
+        with TemporaryDirectory(prefix="agentcraft-eval-") as directory:
+            # Algunas dependencias imprimen progreso. El protocolo stdout es solo JSON.
+            with contextlib.redirect_stdout(sys.stderr):
+                response = execute(spec, payload, Path(directory), usage, state)
+        result = {
+            "status": "ok",
+            "response": response,
+            "usage_known": state["known"] and state["started"] == state["finished"],
+            "usage": usage,
+        }
+    except Exception as exc:
+        # Un error puede haber consumido tokens antes de perder su telemetría.
+        result = {
+            "status": "error",
+            "error": type(exc).__name__,
+            "usage_known": False,
+            "usage": usage,
+        }
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

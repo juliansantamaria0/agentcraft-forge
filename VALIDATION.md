@@ -1,4 +1,34 @@
-# Evidencia de validación — 0.2.5
+# Evidencia de validación — 0.3.0
+
+Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
+
+- 275 pruebas correctas; 90 % de cobertura de la fuente. Las pruebas bloquean la red
+  en el proceso de pytest. Los procesos de dominio usan datos sintéticos y no necesitan red.
+- 32 pruebas añadidas para catálogo, alcance, compatibilidad, suites, reglas,
+  presupuestos, consumo desconocido, callbacks, metadatos de embeddings, CrewAI
+  simulado y protocolo del evaluador en procesos separados.
+- Los cinco proyectos generados pasan Ruff y sus 14 pruebas de contrato/dominio.
+- Se comprueba la ejecución de las suites de gastos y auditoría, incluidas operaciones,
+  reintentos y selección revisada, en carpetas temporales.
+- Black verifica 30 archivos de fuente, scripts y pruebas; Ruff sin incidencias.
+- uv.lock permanece vigente: comprobación offline con Python 3.12 y 97 paquetes.
+- El smoke del wheel comprueba las cinco suites, sus recursos, alcance y preparación
+  sin modelos desde una instalación fuera del checkout.
+
+Las pruebas de medición usan respuestas de proveedor simuladas. **No se ejecutaron
+modelos reales**: las mediciones de exactitud semántica, coste y latencia con un
+proveedor quedan pendientes por decisión del usuario. El coste es una estimación
+a partir de tarifas explícitas, y el control de presupuesto opera entre intentos.
+
+La revisión humana de respuestas abiertas sigue pendiente incluso si sus reglas
+automáticas pasan. El uso de fixtures HTTP en tools no verifica los servicios reales.
+La carpeta temporal de los casos no es una sandbox para código local no fiable.
+
+La comprobación Docker local sigue limitada por el motor Linux inactivo. La CI
+mantiene su prueba Docker y sus jobs Windows/Linux; consulte Actions para el commit
+que vaya a instalar. Esta preparación no crea tags, releases ni publicaciones PyPI.
+
+# Evidencia histórica — 0.2.5
 
 Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
 
