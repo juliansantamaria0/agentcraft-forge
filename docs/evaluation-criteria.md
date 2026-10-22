@@ -12,3 +12,18 @@ Definidos antes de implementar el evaluador.
 - Los casos de dominio usan carpetas temporales con datos sintéticos. Las herramientas usan respuestas HTTP fijas y declaradas, con modelos reales solo mediante activación explícita.
 - Se detiene entre intentos al alcanzar el presupuesto o si falta telemetría. Este control no garantiza un límite de facturación durante una petición en curso.
 - Deben seguir funcionando los cinco tipos, el flujo interactivo, la generación desde wheel y la inspección de proyectos antiguos.
+
+## Refinamiento y caso completo — 0.3.1
+
+Criterios definidos antes de implementar esta ampliación:
+
+- Un fallo de herramienta no puede aprobar un caso de consulta por mencionar el número esperado.
+- Las equivalencias booleano/número dentro de listas y objetos tampoco cuentan como igualdad JSON.
+- Se aceptan variantes correctas previstas, como cuatro horas y 4 horas, sin certificar su semántica solo con texto.
+- Las reglas inválidas se rechazan al preparar la suite, antes de cualquier llamada de pago.
+- Los rechazos de dominio solo cuentan como esperados si el caso declara el código exacto y el paso; no se ocultan otros errores.
+- La decisión final distingue reglas fallidas, ejecución incompleta, revisión humana pendiente y criterios satisfechos.
+- Una revisión se vincula a los bytes exactos del informe, identifica a quien revisa y no rellena aprobaciones automáticamente.
+- El caso completo genera e instala un proyecto de gastos; usa procesos nuevos y solicitudes explícitas, y conserva comprobantes, estado final y una evaluación reproducible.
+- La demostración incluye reintento, conflicto, rechazo de lote inválido, anulación y lectura posterior al reinicio, con importes esperados calculados de forma independiente.
+- Las evaluaciones con modelos reales siguen pendientes por decisión del usuario.

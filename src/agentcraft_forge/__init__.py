@@ -1,3 +1,3 @@
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

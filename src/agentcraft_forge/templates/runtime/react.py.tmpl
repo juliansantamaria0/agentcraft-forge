@@ -119,7 +119,9 @@ def run_react(
                 except (httpx.HTTPError, ValueError, KeyError):
                     output = {"error": "tool_unavailable"}
             ensure_time()
-            observations.append({"tool": call["name"], **output})
+            observations.append(
+                {"tool": call["name"], "arguments": call["args"], **output}
+            )
             messages.append(
                 ToolMessage(
                     content=json.dumps(output, ensure_ascii=False),

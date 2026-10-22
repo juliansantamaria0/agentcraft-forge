@@ -1,4 +1,36 @@
-# Evidencia de validación — 0.3.0
+# Evidencia de validación — 0.3.1
+
+Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
+
+- 304 pruebas correctas; 90 % de cobertura de la fuente.
+- 29 pruebas añadidas para operandos de graders, tipos JSON anidados, variantes,
+  fallos de herramientas, revisión humana, identidad declarada, integridad de
+  informes, decisiones de presupuesto/latencia y rechazos de dominio.
+- Caso completo ejecutado con proyecto generado e instalado en su propio entorno:
+  19 pasos mediante CLI y procesos separados. No se sustituyeron el motor,
+  SQLite, las respuestas ni el intérprete del agente por dobles de prueba.
+- Presupuesto sintético de 100.000 COP; almuerzo 15.000 y transporte 4.500.
+  Reintentos, conflicto y lote inválido conservan 19.500 COP. La anulación del
+  transporte deja un gasto activo de 15.000 y disponible de 85.000 COP.
+- Lectura posterior desde otro proceso y comprobación independiente de los
+  importes, registros y operaciones directamente en SQLite en modo de solo lectura.
+- La suite completa verifica quince reglas en tres intentos con estado nuevo.
+  Las pruebas comprueban además que evaluar no cambia la base de la demostración.
+- CLI y paquete conservan las cinco plantillas; se valida el inventario anterior
+  de proyectos v3 de 0.3.0. Los proyectos nuevos de gastos añaden evals/complete.json.
+- Las revisiones humanas no se inventan: los formularios se generan sin aprobar
+  criterios y el informe distingue review_required de accepted.
+
+Las pruebas de proveedores siguen usando respuestas simuladas. Las llamadas a
+modelos reales y su evaluación semántica quedan pendientes por decisión del
+usuario. Los resultados del caso determinista no miden calidad ni variabilidad
+de un LLM. Accepted se refiere a los criterios declarados del caso.
+
+La CI incorpora la demostración de instalación y persistencia en Windows y Ubuntu,
+además de las pruebas existentes y Docker. Consulte Actions para el resultado del
+commit que vaya a instalar. No se crean tags, releases ni publicaciones PyPI.
+
+# Evidencia histórica — 0.3.0
 
 Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
 

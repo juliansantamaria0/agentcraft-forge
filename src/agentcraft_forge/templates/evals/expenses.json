@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "expenses-smoke-v1",
+  "name": "expenses-smoke-v2",
   "kind": "expenses",
   "reference_date": "2026-10-22",
   "repetitions": 1,
@@ -160,6 +160,137 @@
           "value": 0
         }
       ]
+    },
+    {
+      "id": "conflict-keeps-state",
+      "category": "boundary",
+      "message": "Comprobar rechazo y conservar el saldo anterior.",
+      "requests": [
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 99999,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        }
+      ],
+      "expected_errors": {
+        "1": "operation_conflict"
+      },
+      "checks": [
+        {
+          "path": "step_results.1.code",
+          "op": "equals",
+          "value": "operation_conflict"
+        },
+        {
+          "path": "step_results.1.persisted",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "total",
+          "op": "equals",
+          "value": 15000
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "invalid-batch-keeps-state",
+      "category": "boundary",
+      "message": "Comprobar rechazo y conservar el saldo anterior.",
+      "requests": [
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-invalid-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            },
+            {
+              "amount": 0,
+              "description": "Inválido",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        }
+      ],
+      "expected_errors": {
+        "1": "invalid_integer"
+      },
+      "checks": [
+        {
+          "path": "step_results.1.code",
+          "op": "equals",
+          "value": "invalid_integer"
+        },
+        {
+          "path": "step_results.1.persisted",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "total",
+          "op": "equals",
+          "value": 15000
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 1
+        }
+      ]
     }
-  ]
+  ],
+  "acceptance": {
+    "min_rule_pass_rate": 1,
+    "min_abstention_rule_pass_rate": 1,
+    "max_error_rate": 0,
+    "require_human_review": true
+  }
 }

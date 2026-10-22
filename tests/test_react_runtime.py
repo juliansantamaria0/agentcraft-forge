@@ -103,7 +103,9 @@ def test_valid_calls_keep_observations_and_matching_ids(runtime):
     )
     result = runtime.run_react(model, [tool], "Consulta de prueba")
     assert result.tool_calls == 1
-    assert result.observations == [{"tool": "lookup", "result": "Resultado de prueba"}]
+    assert result.observations == [
+        {"tool": "lookup", "arguments": {}, "result": "Resultado de prueba"}
+    ]
     assert model.messages[1][-1].tool_call_id == "call-1"
 
 
@@ -128,7 +130,9 @@ def test_unapproved_tool_is_denied_and_counts_against_budget(runtime):
     result = runtime.run_react(model, [tool], "Consulta de prueba")
     assert tool.calls == []
     assert result.tool_calls == 1
-    assert result.observations == [{"tool": "shell", "error": "tool_not_allowed"}]
+    assert result.observations == [
+        {"tool": "shell", "arguments": {}, "error": "tool_not_allowed"}
+    ]
 
 
 def test_expired_deadline_after_model_prevents_tools(runtime):

@@ -33,6 +33,18 @@ La propuesta permite revisar importe y fecha. Para registrar el gasto, añada un
 operation_id estable a la solicitud JSON y ejecute agentcraft invoke. Las consultas,
 presupuestos y comprobantes se explican en la [guía de uso](docs/usage.md).
 
+Para comprobar un caso de principio a fin, con el repositorio instalado en su
+entorno Python:
+
+```console
+python scripts/demo_expenses.py --output .demo-expenses
+```
+
+Genera e instala un agente nuevo, registra gastos sintéticos, verifica reintentos
+y rechazos, anula un registro y vuelve a consultar el saldo desde otro proceso.
+Guarda comprobantes y una evaluación de tres intentos. Vea el
+[caso completo y su resultado esperado](docs/complete-case.md).
+
 ## Compruebe el alcance antes de generar
 
 ```console
@@ -66,6 +78,8 @@ por modelo y un presupuesto; vea la [guía de evaluaciones](docs/evaluations.md)
 Los informes incluyen reglas, revisión humana pendiente, abstenciones, tiempos,
 tokens y costes estimados. Las pruebas offline no demuestran la calidad de un modelo
 real. Las evaluaciones reales de esta versión quedan pendientes de ejecución.
+La decisión del informe separa criterios satisfechos, fallos, ejecución incompleta
+y revisión humana pendiente. Esta última se puede documentar con review-evaluation.
 
 ## Instalar y continuar
 

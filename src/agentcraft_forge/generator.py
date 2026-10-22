@@ -141,6 +141,15 @@ def render(spec: AgentSpec) -> dict[str, str]:
         result["evals/smoke.json"] = root.joinpath(
             "evals", spec.plan.kind.value + ".json"
         ).read_text(encoding="utf-8")
+    if (
+        modern
+        and spec.plan.kind == Kind.expenses
+        and spec.generator_version is not None
+        and tuple(map(int, spec.generator_version.split("."))) >= (0, 3, 1)
+    ):
+        result["evals/complete.json"] = root.joinpath(
+            "evals", "expenses-complete.json"
+        ).read_text(encoding="utf-8")
     if spec.template_version in {"2", "3"}:
         result[".agents/skills/agentcraft-project/SKILL.md"] = env.from_string(
             root.joinpath("common", "project_skill.md.j2").read_text(encoding="utf-8")

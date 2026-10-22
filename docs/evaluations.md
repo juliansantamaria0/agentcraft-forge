@@ -80,9 +80,12 @@ ingestión nueva por intento. multi usa los tres roles reales de CrewAI.
 ## Casos, reglas e interpretación
 
 Cada caso tiene un id, categoría, mensaje y checks. Los checks permiten equals,
-contains, not_contains, min_length y max_value sobre rutas como
+contains, not_contains, contains_any, exists, min_length y max_value sobre rutas como
 request.expenses.0.amount. No ejecutan expresiones ni código. Las comparaciones
-de texto no distinguen mayúsculas. equals distingue tipos JSON.
+de texto no distinguen mayúsculas. equals distingue tipos JSON también dentro de
+listas y objetos: true no equivale a 1. contains_any admite variantes de texto
+declaradas; exists diferencia un campo ausente de uno presente con null. Se validan
+los operandos antes de ejecutar: por ejemplo, min_length exige un entero no negativo.
 
 - documents contiene textos sintéticos para RAG.
 - files y requests preparan datos y operaciones de dominio. Cada intento parte
@@ -94,12 +97,21 @@ de texto no distinguen mayúsculas. equals distingue tipos JSON.
 - repetitions controla k, de 1 a 10; timeout_seconds limita cada subproceso.
 - human_review marca respuestas abiertas que requieren valorar pertinencia,
   fidelidad, abstención y ausencia de afirmaciones de acciones no ejecutadas.
+- review_criteria declara los criterios concretos que debe revisar una persona.
+- expected_errors asocia el índice de un paso de requests con su código exacto
+  de rechazo, por ejemplo {"1": "operation_conflict"}. Otro error o la ausencia
+  del rechazo esperado falla el intento. Los errores de infraestructura siguen
+  siendo errores de ejecución. Nunca declare esperado un fallo de persistencia
+  de estado incierto como sustituto de comprobar el resultado.
 
 Las métricas rule_pass_at_1, rule_pass_at_k y rule_pass_power_k son tasas empíricas:
 primer intento correcto, al menos uno correcto entre k, y todos los k correctos.
 Los casos sin completar permanecen en el denominador. No son estimadores
 estadísticos de una población ni equivalen a calidad semántica. Un texto que
 contenga una palabra esperada puede superar una regla y seguir siendo incorrecto.
+Las abstenciones en texto libre se juzgan con rúbrica humana, sin exigir una frase
+fija de rechazo. Los alias de texto de los casos RAG son variantes previstas; si
+aparecen otras formulaciones válidas, revise el grader antes de comparar modelos.
 
 abstention_rule_pass_rate mide las reglas de los casos marcados como abstención;
 incluye aclaración y declaración de requisitos faltantes. En tools y multi la
@@ -116,9 +128,60 @@ sin consumo completo conserva usage_known=false y estimated_cost_usd=null.
 Los informes contienen mensajes sintéticos y respuestas, nunca la clave del
 proveedor. Si adapta los casos con datos personales, el informe también puede
 contenerlos. El destino recomendado .agentcraft está excluido de Git. No se
-sobrescriben informes existentes. La CLI devuelve 2 si hay fallos de reglas o
-ejecución incompleta y 1 para una configuración inválida; las revisiones humanas
-pendientes aparecen explícitas aunque las reglas pasen.
+sobrescriben informes existentes. Las revisiones humanas pendientes aparecen
+explícitas aunque las reglas pasen; los códigos de salida se detallan a continuación.
+
+## Decisión y revisión humana
+
+Desde 0.3.1, acceptance permite fijar min_rule_pass_rate,
+min_abstention_rule_pass_rate, max_error_rate y max_latency_p95_seconds. Los tres
+primeros valores predeterminados son 1, 1 y 0; la latencia no tiene un límite
+predeterminado. En modo live también se comprueba si el coste estimado final
+supera el presupuesto; superarlo impide aceptar la evaluación, aunque la llamada
+ya haya consumido ese importe. require_human_review es true por defecto. Si se desactiva, la
+decisión queda limitada a las reglas y muestra igualmente las revisiones pendientes.
+
+rule_pass_rate divide los intentos aprobados entre todos los previstos;
+rule_pass_rate_by_category desglosa capacidad, abstención y límites. La decisión
+quality_gate es not_run, incomplete, failed, review_required o accepted. Accepted
+significa que se cumplen los criterios declarados de la suite, no que se certifica
+el agente para cualquier tarea. El control del coste sigue siendo entre intentos.
+
+Para revisar un informe ejecutado:
+
+```console
+agentcraft review-evaluation --report eval-real.json --output revision.json
+```
+
+La plantilla deja reviewer y cada respuesta en null. Lea la respuesta, el mensaje,
+los documentos y las observaciones de cada caso en el informe original. Introduzca
+su nombre, true/false por criterio y una nota que identifique la evidencia utilizada.
+Un criterio sin resolver conserva su respuesta null. No copie aprobaciones de otro
+caso ni deduzca calidad semántica por el hecho de que sus reglas hayan pasado.
+
+```console
+agentcraft review-evaluation --report eval-real.json --reviews revision.json --output resultado-revision.json
+```
+
+La revisión debe corresponder al SHA-256 de los bytes exactos del informe. Se
+rechazan criterios cambiados, intentos desconocidos, revisiones repetidas,
+aprobaciones sin nombre/nota y respuestas que no sean booleanos o null. No se
+modifican el informe original ni la revisión. Es una anotación humana declarada,
+no una firma ni una comprobación de identidad. Este flujo usa informes nuevos de
+0.3.1, que incluyen política y métricas de decisión.
+
+La CLI devuelve 0 al preparar o satisfacer los criterios, 1 ante configuración
+inválida, 2 si hay fallos o ejecución incompleta y **3 si falta revisión humana**.
+Un proceso automatizado debe tratar el código 3 como pendiente.
+
+## Caso completo reproducible
+
+Los proyectos expenses nuevos generados desde 0.3.1 añaden evals/complete.json:
+un flujo de diez operaciones con quince comprobaciones, repetido tres veces
+en estado vacío. El ejemplo de [demostración completa](complete-case.md) utiliza
+además la CLI y la instalación real, conserva sus comprobantes y comprueba SQLite
+por separado. Las pruebas repetidas de un motor determinista demuestran regresión
+y aislamiento del estado, no variabilidad de un modelo.
 
 En esta entrega se validó el evaluador offline. **Las ejecuciones con modelos
 reales quedan pendientes por decisión del usuario.** No se publican resultados

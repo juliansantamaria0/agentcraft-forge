@@ -35,6 +35,8 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then PYTHON=.wheel-test/Scripts/python.exe; else PYTHON=.wheel-test/bin/python; fi
           uv pip install --python "$PYTHON" dist/*.whl
           uv run --locked python scripts/wheel_smoke.py "$PYTHON"
+      - name: Demostración completa de gastos con entorno propio
+        run: uv run --locked python scripts/demo_expenses.py --output .demo-expenses
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 15

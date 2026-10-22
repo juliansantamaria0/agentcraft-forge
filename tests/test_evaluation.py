@@ -328,7 +328,10 @@ def test_registered_tools_use_fixed_destinations_and_validate_arguments(
 
 def test_packaged_suites_are_available():
     root = files("agentcraft_forge").joinpath("templates", "evals")
-    assert len([path for path in root.iterdir() if path.name.endswith(".json")]) == 5
+    assert {kind.value + ".json" for kind in Kind} <= {
+        path.name for path in root.iterdir()
+    }
+    assert root.joinpath("expenses-complete.json").is_file()
 
 
 @pytest.mark.parametrize(

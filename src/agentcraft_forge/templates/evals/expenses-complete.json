@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "name": "expenses-complete-v1",
+  "kind": "expenses",
+  "reference_date": "2026-10-22",
+  "repetitions": 3,
+  "timeout_seconds": 60,
+  "cases": [
+    {
+      "id": "complete-budget-workflow",
+      "category": "capability",
+      "message": "Caso completo: registrar, reintentar, rechazar conflictos y lotes inválidos, corregir y consultar.",
+      "requests": [
+        {
+          "action": "set_budget",
+          "operation_id": "eval-budget-0001",
+          "month": "2026-10",
+          "amount": 100000,
+          "currency": "COP"
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "case-transport-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 4500,
+              "description": "Transporte",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-record-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 99999,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "record",
+          "operation_id": "eval-invalid-0001",
+          "currency": "COP",
+          "expenses": [
+            {
+              "amount": 15000,
+              "description": "Almuerzo",
+              "expense_date": "2026-10-22"
+            },
+            {
+              "amount": 0,
+              "description": "Inválido",
+              "expense_date": "2026-10-22"
+            }
+          ]
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        },
+        {
+          "action": "void",
+          "operation_id": "case-void-0001",
+          "expense_ids": [
+            {
+              "$ref": "3.record_ids.0"
+            }
+          ],
+          "reason": "Transporte registrado por error"
+        },
+        {
+          "action": "summary",
+          "month": "2026-10"
+        },
+        {
+          "action": "receipt",
+          "operation_id": "eval-record-0001"
+        }
+      ],
+      "expected_errors": {
+        "4": "operation_conflict",
+        "5": "invalid_integer"
+      },
+      "checks": [
+        {
+          "path": "step_results.0.persisted",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "step_results.1.replayed",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "step_results.2.replayed",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "step_results.2.record_ids",
+          "op": "equals",
+          "value": [
+            1
+          ]
+        },
+        {
+          "path": "step_results.4.code",
+          "op": "equals",
+          "value": "operation_conflict"
+        },
+        {
+          "path": "step_results.5.code",
+          "op": "equals",
+          "value": "invalid_integer"
+        },
+        {
+          "path": "step_results.6.count",
+          "op": "equals",
+          "value": 2
+        },
+        {
+          "path": "step_results.6.total",
+          "op": "equals",
+          "value": 19500
+        },
+        {
+          "path": "step_results.6.remaining_budget",
+          "op": "equals",
+          "value": 80500
+        },
+        {
+          "path": "step_results.7.persisted",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "step_results.8.count",
+          "op": "equals",
+          "value": 1
+        },
+        {
+          "path": "step_results.8.total",
+          "op": "equals",
+          "value": 15000
+        },
+        {
+          "path": "step_results.8.remaining_budget",
+          "op": "equals",
+          "value": 85000
+        },
+        {
+          "path": "replayed",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "record_ids",
+          "op": "equals",
+          "value": [
+            1
+          ]
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "min_rule_pass_rate": 1,
+    "min_abstention_rule_pass_rate": 1,
+    "max_error_rate": 0,
+    "require_human_review": true
+  }
+}

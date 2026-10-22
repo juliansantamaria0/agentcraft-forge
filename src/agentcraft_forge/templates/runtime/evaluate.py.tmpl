@@ -124,8 +124,28 @@ def execute(spec, payload, root, usage, state):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
         results = []
-        for request in case["requests"]:
-            results.append(handle(root, resolve_request(request, results)))
+        from agent_app.domain_common import DomainError
+
+        expected = case.get("expected_errors", {})
+        for index, request in enumerate(case["requests"]):
+            try:
+                result = handle(root, resolve_request(request, results))
+            except DomainError as exc:
+                if expected.get(str(index)) != exc.code:
+                    raise
+                result = {
+                    "status": "error",
+                    "code": exc.code,
+                    "persisted": (
+                        None
+                        if exc.code in {"verification_failed", "operation_unconfirmed"}
+                        else False
+                    ),
+                }
+            else:
+                if str(index) in expected:
+                    raise ValueError("No ocurrió el rechazo esperado.")
+            results.append(result)
         if results:
             return {**results[-1], "step_results": results}
         return propose(case["message"], date.fromisoformat(payload["reference_date"]))

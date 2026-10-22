@@ -53,6 +53,12 @@ def main(python: str) -> None:
                 raise RuntimeError("Preparar evaluaciones no debe ejecutar modelos.")
             if not (target / "scope.json").is_file() or not preview["suite"]["cases"]:
                 raise RuntimeError("Faltan alcance o casos de evaluación en el wheel.")
+            if preview["quality_gate"]["decision"] != "not_run":
+                raise RuntimeError(
+                    "Un plan sin ejecutar no debe tener una decisión de aceptación."
+                )
+            if kind == "expenses" and not (target / "evals/complete.json").is_file():
+                raise RuntimeError("Falta la suite del caso completo de gastos.")
             invoke("build", "--project", str(target))
             output = invoke("run", "--project", str(target), "--dry-run")
             if json.loads(output)["model_invoked"] is not False:

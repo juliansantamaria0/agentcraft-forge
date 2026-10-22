@@ -15,4 +15,5 @@ build/
 site/
 .data/
 .agentcraft/
+.demo-expenses/
 

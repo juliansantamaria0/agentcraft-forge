@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1 — 2026-10-22
+
+- Graders tipados, igualdad JSON recursiva, variantes previstas y comprobaciones
+  de presencia; las reglas inválidas se rechazan antes de ejecutar.
+- Trazas de herramientas con argumentos y casos que exigen una observación
+  correcta, sin confundir una respuesta fallida con datos obtenidos.
+- Decisión de evaluación con tasas por categoría, umbrales declarados,
+  presupuesto estimado y revisión humana pendiente separada de los checks.
+- Rúbricas por caso y comando review-evaluation: anotaciones ligadas a los bytes
+  exactos del informe, sin aprobaciones automáticas; código de salida 3 para revisión pendiente.
+- Rechazos de dominio esperados por paso/código exacto y comprobaciones de saldo
+  conservado ante conflicto de identificadores o lotes inválidos.
+- Suite completa de gastos con quince reglas y tres repeticiones independientes.
+- Demostración reproducible con CLI, instalación real, comprobantes, reintentos,
+  anulación, nuevos procesos y contraste de importes directamente en SQLite.
+- La demostración completa se ejecuta también en CI Windows/Ubuntu.
+- Se conserva el inventario requerido de proyectos v3 generados con 0.3.0.
+  Los modelos reales continúan pendientes de ejecución.
+
 ## 0.3.0 — 2026-10-22
 
 - Vista previa offline con agentcraft plan y alcance exacto antes de confirmar init.

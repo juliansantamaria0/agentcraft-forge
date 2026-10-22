@@ -15,6 +15,7 @@ from rich.table import Table
 from agentcraft_forge import __version__
 from agentcraft_forge.catalog import scope
 from agentcraft_forge.evaluation import Price, evaluate, load_suite, read_json_file
+from agentcraft_forge.evaluation_review import apply_review, prepare_review
 from agentcraft_forge.generator import generate
 from agentcraft_forge.integration import doctor as inspect_installation
 from agentcraft_forge.integration import inspect_project, install_skill
@@ -218,10 +219,10 @@ def evaluate_command(
             with report.open("x", encoding="utf-8", newline="\n") as handle:
                 handle.write(serialized + "\n")
         typer.echo(serialized)
-        if result.get("status") == "incomplete" or any(
-            not t["passed"] for t in result["trials"]
-        ):
+        if result["quality_gate"]["decision"] in {"failed", "incomplete"}:
             raise typer.Exit(2)
+        if result["quality_gate"]["decision"] == "review_required":
+            raise typer.Exit(3)
     except (ValueError, OSError) as exc:
         typer.echo(
             json.dumps(
@@ -229,6 +230,49 @@ def evaluate_command(
                     "status": "error",
                     "code": type(exc).__name__,
                     "message": "Revise suite, build, opciones de ejecución, tarifas y destino del informe.",
+                }
+            )
+        )
+        raise typer.Exit(1) from None
+
+
+@app.command("review-evaluation")
+def review_evaluation_command(
+    report: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    reviews: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    output: Annotated[
+        Path | None, typer.Option(help="Guardar plantilla o resultado sin sobrescribir")
+    ] = None,
+):
+    """Prepara una rúbrica vacía o aplica anotaciones humanas al informe exacto."""
+    try:
+        if output is not None and (
+            output.exists()
+            or any(p.is_symlink() for p in (output, *output.absolute().parents))
+        ):
+            raise ValueError("El destino ya existe o está enlazado.")
+        result = (
+            apply_review(report, reviews)
+            if reviews
+            else prepare_review(report)[1].model_dump(mode="json")
+        )
+        serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+        if output is not None:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(serialized + "\n")
+        typer.echo(serialized)
+        decision = result.get("quality_gate", {}).get("decision")
+        if decision in {"failed", "incomplete"}:
+            raise typer.Exit(2)
+        if decision == "review_required":
+            raise typer.Exit(3)
+    except (ValueError, OSError, KeyError, TypeError):
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "message": "Revise informe, huella, criterios, anotaciones y destino.",
                 }
             )
         )

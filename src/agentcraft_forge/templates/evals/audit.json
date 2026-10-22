@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "audit-smoke-v1",
+  "name": "audit-smoke-v2",
   "kind": "audit",
   "reference_date": "2026-10-22",
   "repetitions": 1,
@@ -148,5 +148,11 @@
         }
       ]
     }
-  ]
+  ],
+  "acceptance": {
+    "min_rule_pass_rate": 1,
+    "min_abstention_rule_pass_rate": 1,
+    "max_error_rate": 0,
+    "require_human_review": true
+  }
 }

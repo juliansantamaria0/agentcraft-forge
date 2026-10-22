@@ -23,9 +23,46 @@ class Strict(BaseModel):
 
 
 class Check(Strict):
-    path: str = Field(min_length=1, max_length=200)
-    op: Literal["equals", "contains", "not_contains", "min_length", "max_value"]
+    path: str = Field(
+        min_length=1, max_length=200, pattern=r"^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*$"
+    )
+    op: Literal[
+        "equals",
+        "contains",
+        "not_contains",
+        "contains_any",
+        "exists",
+        "min_length",
+        "max_value",
+    ]
     value: Any
+
+    @model_validator(mode="after")
+    def valid_operand(self):
+        if self.op == "min_length" and (type(self.value) is not int or self.value < 0):
+            raise ValueError("min_length requiere un entero no negativo.")
+        if self.op == "max_value" and (
+            type(self.value) not in (int, float)
+            or (type(self.value) is float and not math.isfinite(self.value))
+        ):
+            raise ValueError("max_value requiere un número finito.")
+        if self.op == "exists" and type(self.value) is not bool:
+            raise ValueError("exists requiere un booleano.")
+        if self.op == "contains_any" and (
+            not isinstance(self.value, list)
+            or not 1 <= len(self.value) <= 20
+            or any(not isinstance(item, str) or not item.strip() for item in self.value)
+        ):
+            raise ValueError("contains_any requiere entre 1 y 20 textos no vacíos.")
+        return self
+
+
+class Acceptance(Strict):
+    min_rule_pass_rate: float = Field(default=1.0, ge=0, le=1)
+    min_abstention_rule_pass_rate: float = Field(default=1.0, ge=0, le=1)
+    max_error_rate: float = Field(default=0, ge=0, le=1)
+    max_latency_p95_seconds: float | None = Field(default=None, gt=0)
+    require_human_review: bool = True
 
 
 class Case(Strict):
@@ -34,14 +71,38 @@ class Case(Strict):
     message: str = Field(min_length=1, max_length=4000)
     checks: list[Check] = Field(min_length=1, max_length=30)
     human_review: bool = False
+    review_criteria: list[Annotated[str, Field(min_length=5, max_length=500)]] = Field(
+        default_factory=list, max_length=10
+    )
     documents: list[Annotated[str, Field(min_length=1, max_length=8000)]] = Field(
         default_factory=list, max_length=10
     )
     files: dict[str, str] = Field(default_factory=dict, max_length=10)
     requests: list[dict] = Field(default_factory=list, max_length=10)
+    expected_errors: dict[str, str] = Field(default_factory=dict, max_length=10)
 
     @model_validator(mode="after")
     def bounded_fixtures(self):
+        if any(
+            not step.isdigit()
+            or str(int(step)) != step
+            or int(step) >= len(self.requests)
+            or not code.strip()
+            for step, code in self.expected_errors.items()
+        ):
+            raise ValueError(
+                "Cada error esperado debe señalar un paso existente y un código exacto."
+            )
+        if self.human_review and not self.review_criteria:
+            self.review_criteria = [
+                "Resuelve la petición y declara con claridad los límites aplicables.",
+                "Sus afirmaciones están respaldadas por la evidencia disponible.",
+                "No inventa datos ni presenta acciones no ejecutadas como realizadas.",
+            ]
+        if self.review_criteria and not self.human_review:
+            raise ValueError("Una rúbrica requiere human_review=true.")
+        if any(not criterion.strip() for criterion in self.review_criteria):
+            raise ValueError("Los criterios de revisión no pueden estar vacíos.")
         for path, value in self.files.items():
             if (
                 not path
@@ -65,6 +126,7 @@ class Suite(Strict):
     repetitions: int = Field(default=1, ge=1, le=10, strict=True)
     timeout_seconds: int = Field(default=180, ge=1, le=600, strict=True)
     cases: list[Case] = Field(min_length=1, max_length=100)
+    acceptance: Acceptance = Field(default_factory=Acceptance)
 
     @model_validator(mode="after")
     def unique(self):
@@ -74,7 +136,7 @@ class Suite(Strict):
         if len({case.id for case in self.cases}) != len(self.cases):
             raise ValueError("IDs de caso duplicados.")
         if not TEMPLATES[self.kind].domain and any(
-            c.requests or c.files for c in self.cases
+            c.requests or c.files or c.expected_errors for c in self.cases
         ):
             raise ValueError(
                 "Las fixtures de archivos y solicitudes son solo para dominios."
@@ -105,17 +167,48 @@ class Trial(Strict):
     usage: list[Usage] = Field(default_factory=list)
 
 
-def read_json_file(path: Path) -> dict:
+def read_json_document(path: Path) -> tuple[dict, bytes]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
         raise ValueError("Se requiere un JSON local de hasta 1 MB.")
-    value = parse_json(path.read_text(encoding="utf-8-sig"))
+    content = path.read_bytes()
+    if len(content) > 1_000_000:
+        raise ValueError("El JSON supera 1 MB.")
+    value = parse_json(content.decode("utf-8-sig"))
     if not isinstance(value, dict):
         raise ValueError("Se requiere un objeto JSON.")
-    return value
+    return value, content
+
+
+def read_json_file(path: Path) -> dict:
+    return read_json_document(path)[0]
 
 
 def load_suite(path: Path) -> Suite:
     return Suite.model_validate(read_json_file(path))
+
+
+def equal_json(left, right) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            equal_json(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            equal_json(left[key], right[key]) for key in left
+        )
+    return left == right
+
+
+def _contains(container, expected) -> bool:
+    if isinstance(container, str) and isinstance(expected, str):
+        return expected.casefold() in container.casefold()
+    if isinstance(container, list):
+        return any(equal_json(item, expected) for item in container)
+    if isinstance(container, dict) and isinstance(expected, str):
+        return expected in container
+    raise TypeError("Tipo no compatible con contains.")
 
 
 def grade(case: Case, response: dict) -> list[dict]:
@@ -123,27 +216,37 @@ def grade(case: Case, response: dict) -> list[dict]:
     for check in case.checks:
         try:
             value: Any = response
-            for part in check.path.split("."):
-                value = value[int(part)] if isinstance(value, list) else value[part]
+            exists = True
+            try:
+                for part in check.path.split("."):
+                    if isinstance(value, list) and not part.isdigit():
+                        raise KeyError(part)
+                    value = value[int(part)] if isinstance(value, list) else value[part]
+            except (KeyError, IndexError, TypeError):
+                exists = False
             expected = check.value
-            if check.op == "equals":
-                passed = type(value) is type(expected) and value == expected
+            if check.op == "exists":
+                passed = exists == expected
+            elif not exists:
+                passed = False
+            elif check.op == "equals":
+                passed = equal_json(value, expected)
             elif check.op == "contains":
-                passed = (
-                    expected.casefold() in value.casefold()
-                    if isinstance(value, str) and isinstance(expected, str)
-                    else expected in value
-                )
+                passed = _contains(value, expected)
             elif check.op == "not_contains":
-                passed = (
-                    expected.casefold() not in value.casefold()
-                    if isinstance(value, str) and isinstance(expected, str)
-                    else expected not in value
+                passed = not _contains(value, expected)
+            elif check.op == "contains_any":
+                passed = isinstance(value, str) and any(
+                    _contains(value, item) for item in expected
                 )
             elif check.op == "min_length":
-                passed = len(value) >= expected
+                passed = isinstance(value, (str, list, dict)) and len(value) >= expected
             else:
-                passed = value <= expected
+                passed = (
+                    type(value) in (int, float)
+                    and (type(value) is int or math.isfinite(value))
+                    and value <= expected
+                )
         except (KeyError, IndexError, TypeError, ValueError, AttributeError):
             passed = False
         results.append({**check.model_dump(), "passed": bool(passed)})
@@ -223,6 +326,17 @@ def summarize(suite: Suite, trials: list[dict]) -> dict:
         "planned_trials": len(suite.cases) * k,
         "completed_trials": len(trials),
         "rule_pass_at_1": first / len(suite.cases),
+        "rule_pass_rate": sum(t["passed"] for t in trials) / (len(suite.cases) * k),
+        "rule_pass_rate_by_category": {
+            category: sum(
+                t["passed"]
+                for c in suite.cases
+                if c.category == category
+                for t in groups[c.id]
+            )
+            / (sum(c.category == category for c in suite.cases) * k)
+            for category in sorted({c.category for c in suite.cases})
+        },
         "rule_pass_at_k": any_pass / len(suite.cases),
         "rule_pass_power_k": all_pass / len(suite.cases),
         "k": k,
@@ -234,6 +348,9 @@ def summarize(suite: Suite, trials: list[dict]) -> dict:
         ),
         "errors": sum(t["status"] != "ok" for t in trials),
         "human_reviews_pending": sum(t["human_review"] for t in trials),
+        "error_rate": (
+            sum(t["status"] != "ok" for t in trials) / len(trials) if trials else None
+        ),
         "latency_seconds_p50": percentile(0.5),
         "latency_seconds_p95": percentile(0.95),
         "estimated_cost_usd": (
@@ -245,6 +362,88 @@ def summarize(suite: Suite, trials: list[dict]) -> dict:
         "token_usage_complete": bool(trials)
         and all(t["usage_known"] for t in trials)
         and len(trials) == len(suite.cases) * k,
+    }
+
+
+def assess(report: dict, approvals: dict | None = None) -> dict:
+    """Decisión explícita; aprobar reglas no resuelve revisiones humanas pendientes."""
+    if report.get("mode") == "plan":
+        return {"decision": "not_run", "checks": [], "human_reviews_pending": 0}
+    suite = Suite.model_validate(report["suite"])
+    policy = suite.acceptance
+    metrics = report["metrics"]
+    checks = [
+        {
+            "name": "rule_pass_rate",
+            "actual": metrics["rule_pass_rate"],
+            "threshold": policy.min_rule_pass_rate,
+            "passed": metrics["rule_pass_rate"] >= policy.min_rule_pass_rate,
+        },
+        {
+            "name": "error_rate",
+            "actual": metrics["error_rate"],
+            "threshold": policy.max_error_rate,
+            "passed": metrics["error_rate"] is not None
+            and metrics["error_rate"] <= policy.max_error_rate,
+        },
+    ]
+    abstention = metrics["abstention_rule_pass_rate"]
+    if abstention is not None:
+        checks.append(
+            {
+                "name": "abstention_rule_pass_rate",
+                "actual": abstention,
+                "threshold": policy.min_abstention_rule_pass_rate,
+                "passed": abstention >= policy.min_abstention_rule_pass_rate,
+            }
+        )
+    if policy.max_latency_p95_seconds is not None:
+        elapsed = metrics["latency_seconds_p95"]
+        checks.append(
+            {
+                "name": "latency_seconds_p95",
+                "actual": elapsed,
+                "threshold": policy.max_latency_p95_seconds,
+                "passed": elapsed is not None
+                and elapsed <= policy.max_latency_p95_seconds,
+            }
+        )
+    if report.get("mode") == "live":
+        cost = metrics["estimated_cost_usd"]
+        limit = report["max_cost_usd"]
+        checks.append(
+            {
+                "name": "estimated_budget_usd",
+                "actual": cost,
+                "threshold": limit,
+                "passed": cost is not None and cost <= limit,
+            }
+        )
+    approvals = approvals or {}
+    needed = [
+        (trial["case_id"], trial["repetition"])
+        for trial in report["trials"]
+        if trial["human_review"]
+    ]
+    pending = sum(key not in approvals for key in needed)
+    rejected = sum(approvals.get(key) is False for key in needed)
+    if report["status"] != "complete":
+        decision = "incomplete"
+    elif not all(check["passed"] for check in checks) or (
+        policy.require_human_review and rejected
+    ):
+        decision = "failed"
+    elif policy.require_human_review and pending:
+        decision = "review_required"
+    else:
+        decision = "accepted"
+    return {
+        "decision": decision,
+        "checks": checks,
+        "human_reviews_pending": pending,
+        "human_reviews_rejected": rejected,
+        "human_review_required": policy.require_human_review,
+        "scope": "Criterios declarados de esta suite; no certificación general del agente.",
     }
 
 
@@ -289,6 +488,7 @@ def evaluate(
         ],
     }
     if not (run or live):
+        report["quality_gate"] = assess(report)
         return report
     if model_required and not live:
         raise ValueError("Este tipo requiere --live para llamar modelos.")
@@ -371,4 +571,5 @@ def evaluate(
         else "incomplete"
     )
     report["budget_overshoot_usd"] = max(0, total - max_cost_usd) if live else 0
+    report["quality_gate"] = assess(report)
     return report
