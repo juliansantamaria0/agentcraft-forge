@@ -357,6 +357,24 @@ MONTH_NAMES = (
     "noviembre",
     "diciembre",
 )
+SPANISH_DATE = re.compile(
+    r"\b(\d{1,2}) de (" + "|".join(MONTH_NAMES) + r")(?:\s+(?:del?\s+)?(\d{4}))?\b",
+    re.IGNORECASE,
+)
+AGO_DAYS = re.compile(r"\bhace\s+(\w+)\s+d[ií]as?\b", re.IGNORECASE)
+DAY_NUMBERS = {
+    "un": 1,
+    "uno": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+}
 
 
 def proposal_period(message: str, today: date) -> tuple[dict, str]:
@@ -370,6 +388,49 @@ def proposal_period(message: str, today: date) -> tuple[dict, str]:
             "Indique un día o mes concreto; no se admiten rangos, semanas ni años completos.",
         )
     days, months = set(), set()
+    for match in SPANISH_DATE.finditer(lower):
+        if not match[3]:
+            raise DomainError("ambiguous_period", "Indique también el año de la fecha.")
+        try:
+            days.add(
+                date(
+                    int(match[3]), MONTH_NAMES.index(match[2]) + 1, int(match[1])
+                ).isoformat()
+            )
+        except ValueError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha indicada no es válida."
+            ) from exc
+    lower = SPANISH_DATE.sub(" ", lower)
+    for match in AGO_DAYS.finditer(lower):
+        token = match[1]
+        offset = (
+            int(token)
+            if token.isascii() and token.isdigit() and len(token) <= 4
+            else DAY_NUMBERS.get(token)
+        )
+        if offset is None or not 1 <= offset <= 3650:
+            raise DomainError(
+                "ambiguous_period", "Indique de 1 a 3650 días o una fecha exacta."
+            )
+        try:
+            days.add((today - timedelta(days=offset)).isoformat())
+        except OverflowError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha queda fuera del intervalo admitido."
+            ) from exc
+    lower = AGO_DAYS.sub(" ", lower)
+    if re.search(
+        r"\b(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo|anoche|anteanoche|manana|hace|dentro|pasad[oa]|proxim[oa]|anterior|siguiente)\b|\b(?:el|dia)\s+\d{1,2}\b",
+        re.sub(
+            r"\b(?:mes (?:pasado|anterior|proximo|siguiente)|proximo mes)\b",
+            " ",
+            DATES.sub(" ", lower),
+        ),
+    ):
+        raise DomainError(
+            "ambiguous_period", "Indique una fecha exacta para esa referencia temporal."
+        )
     for token in DATES.findall(lower):
         try:
             if "-" in token:
@@ -555,28 +616,14 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 f"Presupuesto mensual en COP para {budget_month}; añadir un operation_id único y estable antes de ejecutar."
             ],
         }
-    explicit_dates = set()
-    for token in DATES.findall(message):
-        try:
-            if "-" in token:
-                value = date.fromisoformat(token)
-            else:
-                day_part, month_part, year_part = token.split("/")
-                year = int(year_part) + (2000 if len(year_part) == 2 else 0)
-                value = date(year, int(month_part), int(day_part))
-        except ValueError:
-            return {**unclear, "reason": "La fecha indicada no es válida."}
-        explicit_dates.add(value)
-    for word, offset in (("hoy", 0), ("ayer", 1), ("anteayer", 2)):
-        if word in words:
-            explicit_dates.add(today - timedelta(days=offset))
-    if len(explicit_dates) > 1:
-        return {
-            **unclear,
-            "reason": "Hay varias fechas; separe los gastos para confirmar su asociación.",
-        }
-    expense_day = next(iter(explicit_dates), today)
-    clean = DATES.sub(" ", message)
+    try:
+        period, _ = proposal_period(message, today)
+    except DomainError as exc:
+        return {**unclear, "reason": str(exc)}
+    if "month" in period:
+        return {**unclear, "reason": "Indique el día exacto del gasto, no solo el mes."}
+    expense_day = date.fromisoformat(period["date"]) if "date" in period else today
+    clean = AGO_DAYS.sub(" ", SPANISH_DATE.sub(" ", DATES.sub(" ", message)))
     clauses = [
         part.strip()
         for part in re.split(r"\s+y\s+|[;\n]", clean, flags=re.IGNORECASE)
@@ -619,7 +666,7 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         )
         description = re.sub(r"\s+", " ", description).strip(" .,")
         description = re.sub(
-            r"^(?:en|de|por|un|una)\s+|\s+(?:por|de|en)$",
+            r"^(?:en|de|por|un|una|el)\s+|\s+(?:por|de|en|el)$",
             "",
             description,
             flags=re.IGNORECASE,

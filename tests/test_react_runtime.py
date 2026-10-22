@@ -1,18 +1,14 @@
-import runpy
-from importlib.resources import files
-from types import SimpleNamespace
-
 import pytest
 
 
 @pytest.fixture
-def runtime():
+def runtime(runtime_project):
     pytest.importorskip(
         "langchain_core",
         reason="Estas pruebas requieren el extra ai; CI instala todos los extras.",
     )
-    path = files("agentcraft_forge").joinpath("templates/runtime/react.py.tmpl")
-    return SimpleNamespace(**runpy.run_path(str(path)))
+    _, load = runtime_project("tools")
+    return load("react")
 
 
 class Model:

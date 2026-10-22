@@ -8,7 +8,7 @@
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.4 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.5 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -79,6 +79,12 @@ Los nuevos informes usan `scan_version=2`; al incorporar este motor a un agente
 existente, vuelva a escanear antes de aplicar selecciones de un formato anterior.
 
 ## Usarlo desde el mismo chat
+
+La [estabilización 0.2.5](docs/stabilization-0.2.5.md) corrige fechas de gastos,
+candidatos equivalentes, cargas RAG incompletas y aislamiento de Docker; conecta
+eventos operativos y amplía las pruebas. El auditor usa scan_version=3 y requiere
+volver a escanear informes anteriores. Las colecciones RAG sin manifiesto requieren
+una ingestión nueva con otro nombre; sus datos existentes no se borran.
 
 Con un asistente que pueda ejecutar herramientas locales, instale el adaptador:
 

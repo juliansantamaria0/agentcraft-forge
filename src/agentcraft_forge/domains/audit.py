@@ -38,9 +38,10 @@ UNCERTAIN_PROGRESS = re.compile(
 NEGATED_PROMISE = re.compile(
     r"\b(?:no|nunca|tampoco)\s+(?:me\s+)?(?:comprometi|tengo que|quede de|acorde con|debo)\b|[¿?]"
 )
-SCAN_VERSION = 2
+SCAN_VERSION = 3
 MAX_REPORT_BYTES = 2_000_000
 MAX_SOURCE_BYTES = 1_000_000
+MAX_CANDIDATES = 500
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
 WHATSAPP_TIME_FIRST = re.compile(
     r"^\[\d{1,2}:\d{2}(?::\d{2})?,\s*(\d{1,2})/(\d{1,2})/(\d{4})\]\s*([^:]+):\s*(.*)$"
@@ -108,6 +109,15 @@ def similarity(left: str, right: str) -> float:
     if len(common) < 3:
         return 1.0 if a == b and len(a) >= 2 else 0.0
     return len(common) / len(a | b)
+
+
+def candidate_similarity(left: dict, right: dict) -> float:
+    """Una coincidencia solicita revisión; no borra fuentes ni fusiona tareas."""
+    if normalize(left["owner"]) != normalize(right["owner"]):
+        return 0.0
+    if left["due_date"] and right["due_date"] and left["due_date"] != right["due_date"]:
+        return 0.0
+    return similarity(left["text"], right["text"])
 
 
 def due_date(value: str, reference: date) -> str | None:
@@ -489,12 +499,29 @@ def scan(root: Path, request: dict) -> dict:
                 ],
             }
             candidates.append(candidate)
+            if len(candidates) > MAX_CANDIDATES:
+                raise DomainError(
+                    "too_many_candidates",
+                    "Máximo 500 candidatos; divida las fuentes o reduzca la ventana.",
+                )
             if is_assignment:
                 assignment_candidates.append(candidate)
         if undated_count:
             errors.append(
                 f"Fuente sin fecha comprobable: {relative} ({undated_count} líneas sin fecha)."
             )
+    for candidate in candidates:
+        candidate["possible_candidate_matches"] = []
+    for index, left in enumerate(candidates):
+        for right in candidates[index + 1 :]:
+            score = candidate_similarity(left, right)
+            if score >= 0.75:
+                left["possible_candidate_matches"].append(
+                    {"candidate_id": right["id"], "score": round(score, 3)}
+                )
+                right["possible_candidate_matches"].append(
+                    {"candidate_id": left["id"], "score": round(score, 3)}
+                )
     for loop in loops:
         loop["status"] = (
             "completed"
@@ -643,6 +670,15 @@ def apply(root: Path, request: dict) -> dict:
                 "invalid_selection", "Algún candidato no pertenece a esta auditoría."
             )
         selected = [by_id[value] for value in ids]
+        if any(
+            candidate_similarity(left, right) >= 0.75
+            for index, left in enumerate(selected)
+            for right in selected[index + 1 :]
+        ):
+            raise DomainError(
+                "possible_duplicate",
+                "La selección contiene candidatos equivalentes; seleccione uno conservando sus fuentes o aclare sus fechas.",
+            )
         if any(candidate["possible_matches"] for candidate in selected):
             raise DomainError(
                 "possible_duplicate",

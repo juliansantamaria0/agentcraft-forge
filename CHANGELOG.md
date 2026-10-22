@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.5 — 2026-10-22
+
+- Fechas de gastos escritas y hace N días; referencias temporales no resueltas
+  piden aclaración antes de proponer una fecha.
+- Auditor con scan_version=3, coincidencias entre candidatos nuevos y rechazo de
+  selecciones equivalentes antes de escribir; fuentes conservadas y límite de 500.
+- Manifiesto RAG loading/ready con inventario y recuento; consultas bloqueadas para
+  cargas incompletas o colecciones antiguas sin comprobante.
+- Docker con contexto permitido explícitamente, código en /app y datos escribibles
+  en /workspace; los datos personales no se incorporan a la imagen.
+- Eventos operativos en stderr con run_id compartido, duración y errores,
+  sin registrar contenido privado; stdout conserva los resultados JSON.
+- Regresiones sobre agentes generados, pruebas RAG locales y smoke Docker en CI
+  y en el flujo de publicación.
+
 ## 0.2.4 — 2026-10-22
 
 - Auditoría de JSON multilínea con BOM y extensión .JSON, IDs de mensaje únicos y

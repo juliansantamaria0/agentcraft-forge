@@ -36,6 +36,7 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked black --check .
       - run: uv run --locked pytest
+      - run: uv run --locked python scripts/docker_smoke.py
       - run: uv build --no-sources
       - run: uv run --locked twine check dist/*
       - name: Instalar el wheel en un entorno nuevo

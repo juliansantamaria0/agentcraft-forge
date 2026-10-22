@@ -17,6 +17,8 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ValidationError
 
+from agent_app.observability import invoke_model, operation
+
 
 class BudgetExceeded(RuntimeError):
     """Se detuvo la ejecución antes de exceder un límite."""
@@ -73,7 +75,7 @@ def run_react(
 
     for _ in range(max_steps):
         ensure_time()
-        response = bound.invoke(messages)
+        response = invoke_model(bound, messages)
         ensure_time()
         if not isinstance(response, AIMessage):
             raise ValueError("Respuesta de modelo no válida.")
@@ -110,7 +112,8 @@ def run_react(
                 output = {"error": "tool_not_allowed"}
             else:
                 try:
-                    output = {"result": selected.invoke(call["args"])}
+                    with operation("tool.invoke"):
+                        output = {"result": selected.invoke(call["args"])}
                 except ValidationError:
                     output = {"error": "invalid_arguments"}
                 except (httpx.HTTPError, ValueError, KeyError):

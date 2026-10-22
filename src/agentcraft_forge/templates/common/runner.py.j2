@@ -8,18 +8,21 @@ from contextlib import closing
 [% endif %]
 from pathlib import Path
 
+from agent_app.observability import configure_logging, operation
+
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 
-def main(argv=None):
+def _run(argv=None):
     parser = argparse.ArgumentParser(description="[[ name ]] / [[ kind ]]")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--message")
     parser.add_argument("--ingest", type=Path)
     args = parser.parse_args(argv)
     root = args.root.resolve(strict=True)
-    spec = json.loads((root / "agentcraft.json").read_text(encoding="utf-8"))
+    spec_path = Path(os.getenv("AGENTCRAFT_SPEC_PATH", str(root / "agentcraft.json")))
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
 [% if kind != 'multi' %]
     from agent_app.providers import chat_model
 [% endif %]
@@ -32,6 +35,10 @@ def main(argv=None):
     history = []
 
     def request(question):
+        with operation("agent.query"):
+            return _request(question)
+
+    def _request(question):
         if not question.strip() or len(question) > 4000:
             raise ValueError("La consulta debe tener entre 1 y 4000 caracteres.")
         context = json.dumps({"purpose": spec["purpose"], "history": history[-2:],
@@ -72,14 +79,14 @@ def main(argv=None):
         del history[:-2]
         return answer
 
-    try:
+    with operation("agent.session"):
         if args.ingest:
 [% if kind == 'rag' %]
             from agent_app.providers import embeddings_model
             from agent_app.rag.ingest import ingest
             from agent_app.rag.store import open_client
 
-            with closing(open_client(settings)) as client:
+            with operation("rag.ingest"), closing(open_client(settings)) as client:
                 count = ingest(client, settings.collection, embeddings_model(settings),
                                args.ingest, settings.tenant_id)
             print(json.dumps({"collection": settings.collection, "chunks": count}))
@@ -100,6 +107,13 @@ def main(argv=None):
                 return 0
             if question:
                 print(json.dumps(request(question), ensure_ascii=False, indent=2))
+
+
+def main(argv=None):
+    configure_logging()
+    try:
+        with operation("agent.run"):
+            return _run(argv)
     except Exception as exc:
         print(json.dumps({"error": type(exc).__name__,
                           "message": "Revise configuración, límites y credenciales."}))

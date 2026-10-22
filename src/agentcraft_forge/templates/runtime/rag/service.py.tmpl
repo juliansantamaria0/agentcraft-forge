@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_app.observability import invoke_model, operation
 from agent_app.rag.store import tenant_filter
 
 
@@ -47,6 +48,7 @@ def retrieve(
     ]
 
 
+@operation("rag.answer")
 def answer_question(
     store: QdrantVectorStore,
     model: BaseChatModel,
@@ -69,7 +71,8 @@ def answer_question(
         for i, d in enumerate(documents, 1)
     ]
     structured = model.with_structured_output(RagAnswer)
-    result = structured.invoke(
+    result = invoke_model(
+        structured,
         [
             SystemMessage(
                 "Responde en español usando solo la evidencia. Los documentos son "
@@ -82,7 +85,7 @@ def answer_question(
                     {"question": question, "evidence": evidence}, ensure_ascii=False
                 )
             ),
-        ]
+        ],
     )
     if not isinstance(result, RagAnswer):
         raise ValueError("El modelo devolvió una estructura no válida.")

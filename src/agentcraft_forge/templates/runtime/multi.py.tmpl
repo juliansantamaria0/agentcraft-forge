@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent_app.observability import operation
 from agent_app.settings import Settings
 
 
@@ -85,7 +86,8 @@ def run_multi(settings: Settings, requirements: str) -> Proposal:
         max_retries=1,
         max_tokens=settings.max_output_tokens,
     )
-    result = build_crew(llm).kickoff(inputs={"requirements": requirements})
+    with operation("model.team"):
+        result = build_crew(llm).kickoff(inputs={"requirements": requirements})
     if not isinstance(result.pydantic, Proposal):
         raise ValueError("CrewAI no produjo la propuesta estructurada esperada.")
     return result.pydantic

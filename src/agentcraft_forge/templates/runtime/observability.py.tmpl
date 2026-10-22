@@ -5,9 +5,11 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from uuid import uuid4
 
 LOGGER = logging.getLogger("agent_app")
+RUN_ID = ContextVar("agentcraft_run_id", default=None)
 
 
 def configure_logging() -> None:
@@ -18,9 +20,15 @@ def configure_logging() -> None:
     LOGGER.propagate = False
 
 
+def invoke_model(model, messages):
+    with operation("model.invoke"):
+        return model.invoke(messages)
+
+
 @contextmanager
 def operation(name: str) -> Iterator[str]:
-    run_id = str(uuid4())
+    run_id = RUN_ID.get() or str(uuid4())
+    token = RUN_ID.set(run_id)
     started = time.monotonic()
     status = "ok"
     try:
@@ -29,6 +37,7 @@ def operation(name: str) -> Iterator[str]:
         status = "error"
         raise
     finally:
+        RUN_ID.reset(token)
         LOGGER.info(
             json.dumps(
                 {

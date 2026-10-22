@@ -1,4 +1,31 @@
-# Evidencia de validación — 0.2.4
+# Evidencia de validación — 0.2.5
+
+Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
+
+- 243 pruebas correctas en un entorno nuevo instalado desde uv.lock, con todos los
+  extras y el grupo dev. La fixture mantiene bloqueadas las conexiones de los tests.
+- 90 % de cobertura de sentencias en fuente de la CLI y motores de dominio; los
+  runtimes generados se prueban por comportamiento y no forman parte de ese porcentaje.
+- Ruff correcto en fuente, scripts y pruebas. Black verifica 27 archivos.
+- Nuevas regresiones de fechas, candidatos equivalentes y tareas recurrentes;
+  manifiesto RAG loading/ready, interrupciones entre lotes y al finalizar, inventario
+  incorrecto, pérdida de fragmentos, separación por tenant y colecciones heredadas.
+- Los runtimes generados comprueban eventos de modelos y herramientas, errores,
+  run_id compartido y ausencia de preguntas o resultados privados en stderr.
+- Se han construido wheel y sdist y se ha comprobado una instalación aislada del
+  wheel fuera del checkout. Las pruebas de dominio generadas incluyen las regresiones
+  de fechas y candidatos equivalentes.
+
+Docker no se ejecutó localmente porque el motor Linux de Docker Desktop no estaba
+disponible. El cambio de contexto y permisos tiene revisión estática y pruebas de
+las plantillas; scripts/docker_smoke.py ejecuta la comprobación real en el nuevo job
+Linux de CI y en publicación. Consulte Actions para el resultado del commit publicado.
+
+Estas comprobaciones corresponden a la preparación local de la versión. No se han
+creado tags, releases o publicaciones PyPI. No se usaron modelos reales ni datos personales.
+Al incorporar los cambios a un agente existente, siga docs/stabilization-0.2.5.md.
+
+## Evidencia histórica — 0.2.4
 
 Fecha: 22 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 

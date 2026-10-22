@@ -1,6 +1,6 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
-**Guía técnica y código completo · Versión 0.2.4 · 22 de octubre de 2026**
+**Guía técnica y código completo · Versión 0.2.5 · 22 de octubre de 2026**
 
 El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.
 
@@ -10,7 +10,7 @@ El diseñador local usa reglas; el modo `--ai` añade un LLM con salida estructu
 
 ## Uso desde el chat, gastos y compromisos en 0.2
 
-### Operación por chat y comprobantes — 0.2.4
+### Operación por chat y comprobantes — 0.2.5
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -249,7 +249,7 @@ owner es declarada y no constituye autenticación.
 
 La lectura verifica el hash del contenido contra el inventario y vuelve a comprobar
 el inventario antes de guardar el informe. Si detecta cambios, devuelve sources_changed
-y exige volver a auditar. Los informes usan scan_version=2, incluido en su ID: un
+y exige volver a auditar. Los informes usan scan_version=3, incluido en su ID: un
 cambio de formato no sobrescribe el informe previo. Apply rechaza informes de otro
 formato con unsupported_scan; genere y revise uno nuevo al actualizar el motor.
 Un comprobante ya confirmado sigue siendo histórico y los reintentos conservan su ID.
@@ -401,6 +401,74 @@ Las fuentes recuperadas y las respuestas de APIs son datos no confiables. El con
 de herramientas limita el daño incluso cuando un modelo interpreta mal un texto.
 No se habilita shell ni escritura remota de forma predeterminada.
 
+
+### Estabilización 0.2.5
+
+Las correcciones se aplican al generador y a las plantillas para proyectos nuevos.
+Una reinstalación de la CLI no sobrescribe agentes existentes ni sus datos.
+Genere una copia, compare los archivos y ejecute sus pruebas antes de incorporar cambios.
+
+#### Gastos
+
+Las propuestas admiten fechas como 20 de octubre de 2026 y hace tres días, con una
+fecha de referencia inyectable para pruebas. El lunes, anoche, periodos no admitidos
+y fechas sin año piden aclaración. Un mes sin día no se convierte en un gasto de hoy.
+El motor sigue sin escribir al interpretar un mensaje.
+
+#### Auditoría
+
+scan_version=3 conserva cada candidato y su evidencia. possible_candidate_matches
+relaciona candidatos similares con responsable compatible y sin vencimientos
+explícitos distintos. No se fusionan tareas ni se descartan fuentes.
+Una selección que contenga candidatos equivalentes se rechaza antes de escribir.
+Seleccione un representante o aclare las fechas si son tareas recurrentes.
+El límite es 500 candidatos por escaneo; divida fuentes o ventanas si lo supera.
+Los informes anteriores deben volver a generarse. Los reintentos con comprobantes
+ya confirmados conservan su resultado histórico.
+
+#### Cargas documentales
+
+La colección se crea con un manifiesto de carga en estado loading. Solo cambia a
+ready después de comprobar el recuento completo. Las consultas exigen versión,
+estado, inventario y recuento coherentes antes de usar embeddings o modelo.
+Una interrupción, incluso después de guardar un lote, deja bloqueadas las consultas.
+Esta transición de estado evita publicar un corpus parcial sin duplicar colecciones.
+
+Las colecciones antiguas sin manifiesto también se rechazan. Conserve las fuentes,
+elija otro QDRANT_COLLECTION y repita la ingestión. No se borran ni sobrescriben
+colecciones existentes al reintentar. Revise y elimine manualmente las cargas
+abandonadas solo después de verificar que ya no las necesita.
+El servidor Qdrant debe admitir metadatos de colección, como el cliente 1.19.1
+utilizado en las pruebas. Modificar vectores directamente después de ready queda
+fuera del contrato de snapshot inmutable.
+
+#### Contenedores y datos
+
+Docker copia exclusivamente metadatos de empaquetado, código y agentcraft.json.
+El contexto usa una lista de archivos permitidos. No incorpora journal, whatsapp,
+open-loops.md, .env ni directorios de estado de la carpeta desde la que se construye.
+El código vive en /app y el estado en /workspace, con propietario UID/GID 10001.
+
+Monte almacenamiento persistente sobre /workspace. Un volumen nuevo comienza vacío:
+el auditor necesita su open-loops.md y sus fuentes reales, aportados al ejecutar.
+Los bind mounts deben permitir escritura al UID/GID de ejecución, incluida la carpeta
+que contiene open-loops.md; un reemplazo atómico necesita permisos en ese directorio.
+No monte datos personales en /app ni los añada a la imagen para inicializarla.
+En las plantillas de IA, AGENTCRAFT_SPEC_PATH=/app/agentcraft.json permite separar la
+especificación del directorio de datos. Las credenciales se aportan mediante el entorno.
+
+scripts/docker_smoke.py construye las plantillas expenses y audit con marcadores
+personales sintéticos. Comprueba que no se copiaron y ejecuta dos contenedores por
+agente contra un volumen: usuario sin privilegios, persistencia, escrituras atómicas
+y reintentos. CI lo ejecuta en Linux y publicación lo exige antes de crear el tag.
+
+#### Eventos
+
+Los runtimes de IA registran sesión, consultas, cargas documentales, llamadas al
+modelo y herramientas en stderr. Las operaciones anidadas comparten run_id y
+registran duración y estado. stdout conserva los resultados JSON.
+No se registran preguntas, respuestas, argumentos de herramientas ni excepciones
+con datos del usuario. No se añade por este cambio una medición monetaria del proveedor.
 
 
 ### Contratos y diseñador: código funcional
@@ -1607,7 +1675,7 @@ app()
 ````python
 """AgentCraft Forge: planes tipados y generación determinista de agentes."""
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 ````
 
 
@@ -2144,6 +2212,24 @@ MONTH_NAMES = (
     "noviembre",
     "diciembre",
 )
+SPANISH_DATE = re.compile(
+    r"\b(\d{1,2}) de (" + "|".join(MONTH_NAMES) + r")(?:\s+(?:del?\s+)?(\d{4}))?\b",
+    re.IGNORECASE,
+)
+AGO_DAYS = re.compile(r"\bhace\s+(\w+)\s+d[ií]as?\b", re.IGNORECASE)
+DAY_NUMBERS = {
+    "un": 1,
+    "uno": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+}
 
 
 def proposal_period(message: str, today: date) -> tuple[dict, str]:
@@ -2157,6 +2243,49 @@ def proposal_period(message: str, today: date) -> tuple[dict, str]:
             "Indique un día o mes concreto; no se admiten rangos, semanas ni años completos.",
         )
     days, months = set(), set()
+    for match in SPANISH_DATE.finditer(lower):
+        if not match[3]:
+            raise DomainError("ambiguous_period", "Indique también el año de la fecha.")
+        try:
+            days.add(
+                date(
+                    int(match[3]), MONTH_NAMES.index(match[2]) + 1, int(match[1])
+                ).isoformat()
+            )
+        except ValueError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha indicada no es válida."
+            ) from exc
+    lower = SPANISH_DATE.sub(" ", lower)
+    for match in AGO_DAYS.finditer(lower):
+        token = match[1]
+        offset = (
+            int(token)
+            if token.isascii() and token.isdigit() and len(token) <= 4
+            else DAY_NUMBERS.get(token)
+        )
+        if offset is None or not 1 <= offset <= 3650:
+            raise DomainError(
+                "ambiguous_period", "Indique de 1 a 3650 días o una fecha exacta."
+            )
+        try:
+            days.add((today - timedelta(days=offset)).isoformat())
+        except OverflowError as exc:
+            raise DomainError(
+                "invalid_date", "La fecha queda fuera del intervalo admitido."
+            ) from exc
+    lower = AGO_DAYS.sub(" ", lower)
+    if re.search(
+        r"\b(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo|anoche|anteanoche|manana|hace|dentro|pasad[oa]|proxim[oa]|anterior|siguiente)\b|\b(?:el|dia)\s+\d{1,2}\b",
+        re.sub(
+            r"\b(?:mes (?:pasado|anterior|proximo|siguiente)|proximo mes)\b",
+            " ",
+            DATES.sub(" ", lower),
+        ),
+    ):
+        raise DomainError(
+            "ambiguous_period", "Indique una fecha exacta para esa referencia temporal."
+        )
     for token in DATES.findall(lower):
         try:
             if "-" in token:
@@ -2342,28 +2471,14 @@ def propose(message: str, reference_date: date | None = None) -> dict:
                 f"Presupuesto mensual en COP para {budget_month}; añadir un operation_id único y estable antes de ejecutar."
             ],
         }
-    explicit_dates = set()
-    for token in DATES.findall(message):
-        try:
-            if "-" in token:
-                value = date.fromisoformat(token)
-            else:
-                day_part, month_part, year_part = token.split("/")
-                year = int(year_part) + (2000 if len(year_part) == 2 else 0)
-                value = date(year, int(month_part), int(day_part))
-        except ValueError:
-            return {**unclear, "reason": "La fecha indicada no es válida."}
-        explicit_dates.add(value)
-    for word, offset in (("hoy", 0), ("ayer", 1), ("anteayer", 2)):
-        if word in words:
-            explicit_dates.add(today - timedelta(days=offset))
-    if len(explicit_dates) > 1:
-        return {
-            **unclear,
-            "reason": "Hay varias fechas; separe los gastos para confirmar su asociación.",
-        }
-    expense_day = next(iter(explicit_dates), today)
-    clean = DATES.sub(" ", message)
+    try:
+        period, _ = proposal_period(message, today)
+    except DomainError as exc:
+        return {**unclear, "reason": str(exc)}
+    if "month" in period:
+        return {**unclear, "reason": "Indique el día exacto del gasto, no solo el mes."}
+    expense_day = date.fromisoformat(period["date"]) if "date" in period else today
+    clean = AGO_DAYS.sub(" ", SPANISH_DATE.sub(" ", DATES.sub(" ", message)))
     clauses = [
         part.strip()
         for part in re.split(r"\s+y\s+|[;\n]", clean, flags=re.IGNORECASE)
@@ -2406,7 +2521,7 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         )
         description = re.sub(r"\s+", " ", description).strip(" .,")
         description = re.sub(
-            r"^(?:en|de|por|un|una)\s+|\s+(?:por|de|en)$",
+            r"^(?:en|de|por|un|una|el)\s+|\s+(?:por|de|en|el)$",
             "",
             description,
             flags=re.IGNORECASE,
@@ -2476,9 +2591,10 @@ UNCERTAIN_PROGRESS = re.compile(
 NEGATED_PROMISE = re.compile(
     r"\b(?:no|nunca|tampoco)\s+(?:me\s+)?(?:comprometi|tengo que|quede de|acorde con|debo)\b|[¿?]"
 )
-SCAN_VERSION = 2
+SCAN_VERSION = 3
 MAX_REPORT_BYTES = 2_000_000
 MAX_SOURCE_BYTES = 1_000_000
+MAX_CANDIDATES = 500
 WHATSAPP = re.compile(r"^\[(\d{1,2})/(\d{1,2})/(\d{4}),?\s+[^\]]+\]\s*([^:]+):\s*(.*)$")
 WHATSAPP_TIME_FIRST = re.compile(
     r"^\[\d{1,2}:\d{2}(?::\d{2})?,\s*(\d{1,2})/(\d{1,2})/(\d{4})\]\s*([^:]+):\s*(.*)$"
@@ -2546,6 +2662,15 @@ def similarity(left: str, right: str) -> float:
     if len(common) < 3:
         return 1.0 if a == b and len(a) >= 2 else 0.0
     return len(common) / len(a | b)
+
+
+def candidate_similarity(left: dict, right: dict) -> float:
+    """Una coincidencia solicita revisión; no borra fuentes ni fusiona tareas."""
+    if normalize(left["owner"]) != normalize(right["owner"]):
+        return 0.0
+    if left["due_date"] and right["due_date"] and left["due_date"] != right["due_date"]:
+        return 0.0
+    return similarity(left["text"], right["text"])
 
 
 def due_date(value: str, reference: date) -> str | None:
@@ -2927,12 +3052,29 @@ def scan(root: Path, request: dict) -> dict:
                 ],
             }
             candidates.append(candidate)
+            if len(candidates) > MAX_CANDIDATES:
+                raise DomainError(
+                    "too_many_candidates",
+                    "Máximo 500 candidatos; divida las fuentes o reduzca la ventana.",
+                )
             if is_assignment:
                 assignment_candidates.append(candidate)
         if undated_count:
             errors.append(
                 f"Fuente sin fecha comprobable: {relative} ({undated_count} líneas sin fecha)."
             )
+    for candidate in candidates:
+        candidate["possible_candidate_matches"] = []
+    for index, left in enumerate(candidates):
+        for right in candidates[index + 1 :]:
+            score = candidate_similarity(left, right)
+            if score >= 0.75:
+                left["possible_candidate_matches"].append(
+                    {"candidate_id": right["id"], "score": round(score, 3)}
+                )
+                right["possible_candidate_matches"].append(
+                    {"candidate_id": left["id"], "score": round(score, 3)}
+                )
     for loop in loops:
         loop["status"] = (
             "completed"
@@ -3081,6 +3223,15 @@ def apply(root: Path, request: dict) -> dict:
                 "invalid_selection", "Algún candidato no pertenece a esta auditoría."
             )
         selected = [by_id[value] for value in ids]
+        if any(
+            candidate_similarity(left, right) >= 0.75
+            for index, left in enumerate(selected)
+            for right in selected[index + 1 :]
+        ):
+            raise DomainError(
+                "possible_duplicate",
+                "La selección contiene candidatos equivalentes; seleccione uno conservando sus fuentes o aclare sus fechas.",
+            )
         if any(candidate["possible_matches"] for candidate in selected):
             raise DomainError(
                 "possible_duplicate",
@@ -3253,29 +3404,25 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip install --no-cache-dir . && \
     groupadd --gid 10001 app && useradd --uid 10001 --gid app --create-home app
-COPY --chown=app:app . .
-RUN mkdir -p /app/.data && chown app:app /app/.data
-ENV PYTHONUNBUFFERED=1 CREWAI_TELEMETRY_DISABLED=true OTEL_SDK_DISABLED=true
+COPY agentcraft.json /app/agentcraft.json
+WORKDIR /workspace
+RUN mkdir -p /workspace/.data /workspace/.agentcraft && \
+    chown app:app /workspace /workspace/.data /workspace/.agentcraft
+ENV PYTHONUNBUFFERED=1 CREWAI_TELEMETRY_DISABLED=true OTEL_SDK_DISABLED=true AGENTCRAFT_SPEC_PATH=/app/agentcraft.json
 USER 10001:10001
-ENTRYPOINT ["agent", "--root", "/app"]
+ENTRYPOINT ["agent", "--root", "/workspace"]
 ````
 
 
 ### `src/agentcraft_forge/templates/common/dockerignore.j2`
 
 ````text
-.git
-.venv
-.env
-.env.*
-.data
-.agentcraft
-__pycache__
-.pytest_cache
-.ruff_cache
-*.egg-info
-dist
-build
+*
+!pyproject.toml
+!README.md
+!agentcraft.json
+!src/
+!src/**
 ````
 
 
@@ -3353,10 +3500,13 @@ Los exports JSON admiten BOM, extensión .JSON y mensajes multilínea con IDs ú
 source.message_line conserva la línea interna y deadline_source la evidencia de una
 entrega general. date_warnings señala vencimientos dudosos; due_date queda vacío sin
 eliminar la tarea. Revise esas advertencias antes de seleccionar candidatos.
-El informe usa scan_version=2: al incorporar este motor a un agente anterior, vuelva
+El informe usa scan_version=3: al incorporar este motor a un agente anterior, vuelva
 a escanear antes de aplicar un informe de otro formato. Las fuentes que cambian durante
 la lectura obligan a repetir la auditoría. El informe admite 2 MB y el registro 1 MB;
-los tamaños se comprueban antes de guardar o aplicar.
+los tamaños se comprueban antes de guardar o aplicar. possible_candidate_matches
+señala equivalencias entre candidatos nuevos. Una selección con coincidencias se
+rechaza antes de escribir; seleccione un representante o aclare los vencimientos de
+tareas recurrentes. Se conservan todas las fuentes y se admiten hasta 500 candidatos.
 [% endif %]
 
 ## Uso desde el chat
@@ -3370,6 +3520,12 @@ el motor. En sesión interactiva, un mensaje no válido permite continuar la con
 Actualizar AgentCraft no modifica automáticamente el código de este proyecto generado.
 
 ## Pruebas
+
+Docker contiene solo código y metadatos, sin fuentes ni datos personales. El estado
+se guarda en /workspace, escribible para UID/GID 10001. Use un volumen persistente;
+si monta una carpeta existente, ese usuario necesita permisos para crear archivos
+y reemplazar open-loops.md en su directorio padre. Un auditor vacío necesita que
+aporte su registro y fuentes al ejecutar.
 
 Después de instalar el proyecto, use el Python de su venv:
 `python -m unittest discover -s tests -p test_domain.py`.
@@ -3454,9 +3610,17 @@ import json
 [% endif %]
 import tempfile
 import unittest
+[% if kind == 'expenses' %]
+from datetime import date
+[% endif %]
 from pathlib import Path
 
+[% if kind == 'expenses' %]
+from agent_app.domain import handle, propose
+[% else %]
 from agent_app.domain import handle
+from agent_app.domain_common import DomainError
+[% endif %]
 
 
 class DomainContract(unittest.TestCase):
@@ -3486,6 +3650,27 @@ class DomainContract(unittest.TestCase):
             self.assertFalse(result["persisted"])
             self.assertEqual(len(result["candidates"]), 2)
             self.assertEqual(result["candidates"][1]["source"]["message_line"], 2)
+[% endif %]
+
+    def test_review_regression(self):
+[% if kind == 'expenses' %]
+        result = propose("Gasté 15k en transporte hace tres días", date(2026, 10, 22))
+        self.assertEqual(result["request"]["expenses"][0]["expense_date"], "2026-10-19")
+        self.assertEqual(propose("Gasté 15k en transporte el lunes", date(2026, 10, 22))["status"], "needs_clarification")
+[% else %]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
+            (root / "journal").mkdir()
+            for suffix in ("a", "b"):
+                (root / "journal" / f"2026-10-22-{suffix}.md").write_text("Tengo que llamar al proveedor mañana", encoding="utf-8")
+            report = handle(root, {"action": "scan", "owner": "Persona de prueba", "reference_date": "2026-10-22"})
+            self.assertEqual(len(report["candidates"]), 2)
+            self.assertTrue(report["candidates"][0]["possible_candidate_matches"])
+            request = {"action": "apply", "scan_id": report["scan_id"], "candidate_ids": [item["id"] for item in report["candidates"]], "operation_id": "generated-duplicate-001"}
+            with self.assertRaises(DomainError):
+                handle(root, request)
+            self.assertEqual((root / "open-loops.md").read_text(encoding="utf-8"), "# Compromisos\n")
 [% endif %]
 ````
 
@@ -3692,7 +3877,9 @@ agentcraft run --message "¿Cuánto tarda un ticket de prioridad alta?"
 
 Usa Qdrant en disco por defecto, para un proceso de desarrollo. Para concurrencia,
 configure QDRANT_URL y credenciales de servidor. Cada ingestión necesita una colección
-nueva; evalúe el snapshot antes de promoverlo a lectores de producción.
+nueva. Se marca ready solo al completar y verificar la carga. Las consultas rechazan
+colecciones incompletas o antiguas sin manifiesto; conserve las fuentes y use otro
+QDRANT_COLLECTION para volver a ingerir. No se borran colecciones al reintentar.
 [% elif kind == 'tools' %]
 ```console
 agentcraft run --message "Consulta qdrant/qdrant y el clima en Bogota"
@@ -3733,6 +3920,12 @@ restauración Qdrant, cancelación del worker y revisión de las condiciones de 
 Las citas se validan por ID; la implicación factual requiere evaluación adicional.
 Consulte `docs/architecture.md`. No se incluyen secretos, modelos entrenados ni un
 servidor HTTP autenticado.
+
+Docker contiene solo código y metadatos. Monte almacenamiento persistente en
+/workspace con permisos para UID/GID 10001; las credenciales se aportan al ejecutar.
+El manifiesto de configuración se lee de /app/agentcraft.json dentro de la imagen.
+Los eventos operativos se escriben en stderr, con run_id compartido, duración y
+estado, sin preguntas ni resultados privados. stdout conserva los resultados JSON.
 ````
 
 
@@ -3749,18 +3942,21 @@ from contextlib import closing
 [% endif %]
 from pathlib import Path
 
+from agent_app.observability import configure_logging, operation
+
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 
-def main(argv=None):
+def _run(argv=None):
     parser = argparse.ArgumentParser(description="[[ name ]] / [[ kind ]]")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--message")
     parser.add_argument("--ingest", type=Path)
     args = parser.parse_args(argv)
     root = args.root.resolve(strict=True)
-    spec = json.loads((root / "agentcraft.json").read_text(encoding="utf-8"))
+    spec_path = Path(os.getenv("AGENTCRAFT_SPEC_PATH", str(root / "agentcraft.json")))
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
 [% if kind != 'multi' %]
     from agent_app.providers import chat_model
 [% endif %]
@@ -3773,6 +3969,10 @@ def main(argv=None):
     history = []
 
     def request(question):
+        with operation("agent.query"):
+            return _request(question)
+
+    def _request(question):
         if not question.strip() or len(question) > 4000:
             raise ValueError("La consulta debe tener entre 1 y 4000 caracteres.")
         context = json.dumps({"purpose": spec["purpose"], "history": history[-2:],
@@ -3813,14 +4013,14 @@ def main(argv=None):
         del history[:-2]
         return answer
 
-    try:
+    with operation("agent.session"):
         if args.ingest:
 [% if kind == 'rag' %]
             from agent_app.providers import embeddings_model
             from agent_app.rag.ingest import ingest
             from agent_app.rag.store import open_client
 
-            with closing(open_client(settings)) as client:
+            with operation("rag.ingest"), closing(open_client(settings)) as client:
                 count = ingest(client, settings.collection, embeddings_model(settings),
                                args.ingest, settings.tenant_id)
             print(json.dumps({"collection": settings.collection, "chunks": count}))
@@ -3841,6 +4041,13 @@ def main(argv=None):
                 return 0
             if question:
                 print(json.dumps(request(question), ensure_ascii=False, indent=2))
+
+
+def main(argv=None):
+    configure_logging()
+    try:
+        with operation("agent.run"):
+            return _run(argv)
     except Exception as exc:
         print(json.dumps({"error": type(exc).__name__,
                           "message": "Revise configuración, límites y credenciales."}))
@@ -3892,6 +4099,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent_app.observability import operation
 from agent_app.settings import Settings
 
 
@@ -3973,7 +4181,8 @@ def run_multi(settings: Settings, requirements: str) -> Proposal:
         max_retries=1,
         max_tokens=settings.max_output_tokens,
     )
-    result = build_crew(llm).kickoff(inputs={"requirements": requirements})
+    with operation("model.team"):
+        result = build_crew(llm).kickoff(inputs={"requirements": requirements})
     if not isinstance(result.pydantic, Proposal):
         raise ValueError("CrewAI no produjo la propuesta estructurada esperada.")
     return result.pydantic
@@ -3990,9 +4199,11 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from uuid import uuid4
 
 LOGGER = logging.getLogger("agent_app")
+RUN_ID = ContextVar("agentcraft_run_id", default=None)
 
 
 def configure_logging() -> None:
@@ -4003,9 +4214,15 @@ def configure_logging() -> None:
     LOGGER.propagate = False
 
 
+def invoke_model(model, messages):
+    with operation("model.invoke"):
+        return model.invoke(messages)
+
+
 @contextmanager
 def operation(name: str) -> Iterator[str]:
-    run_id = str(uuid4())
+    run_id = RUN_ID.get() or str(uuid4())
+    token = RUN_ID.set(run_id)
     started = time.monotonic()
     status = "ok"
     try:
@@ -4014,6 +4231,7 @@ def operation(name: str) -> Iterator[str]:
         status = "error"
         raise
     finally:
+        RUN_ID.reset(token)
         LOGGER.info(
             json.dumps(
                 {
@@ -4129,14 +4347,6 @@ def ingest(
         chunk_size=800, chunk_overlap=120, add_start_index=True
     )
     chunks = splitter.split_documents(load_documents(directory, tenant_id))
-    dimensions = len(embeddings.embed_query("dimension probe"))
-    client.create_collection(
-        collection_name=collection,
-        vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
-    )
-    store = QdrantVectorStore(
-        client=client, collection_name=collection, embedding=embeddings
-    )
     ids = [
         str(
             uuid5(
@@ -4147,7 +4357,47 @@ def ingest(
         )
         for doc in chunks
     ]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("El inventario de fragmentos no es válido.")
+    manifest = {
+        "version": 1,
+        "state": "loading",
+        "chunks": len(chunks),
+        "inventory_sha256": hashlib.sha256("\n".join(ids).encode()).hexdigest(),
+    }
+    dimensions = len(embeddings.embed_query("dimension probe"))
+    client.create_collection(
+        collection_name=collection,
+        vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
+        metadata={"agentcraft": manifest},
+    )
+    store = QdrantVectorStore(
+        client=client, collection_name=collection, embedding=embeddings
+    )
     store.add_documents(chunks, ids=ids)
+    if client.count(collection, exact=True).count != len(chunks):
+        raise ValueError("Carga incompleta; no se habilitarán consultas.")
+    for offset in range(0, len(ids), 256):
+        expected = set(ids[offset : offset + 256])
+        actual = client.retrieve(
+            collection_name=collection,
+            ids=list(expected),
+            with_payload=False,
+            with_vectors=False,
+        )
+        if {str(point.id) for point in actual} != expected:
+            raise ValueError(
+                "El inventario guardado está incompleto; no se habilitarán consultas."
+            )
+    # Un fallo o terminación previa conserva loading. No se borran datos al reintentar.
+    if not client.update_collection(
+        collection_name=collection,
+        metadata={"agentcraft": {**manifest, "state": "ready"}},
+    ):
+        raise ValueError("No se pudo confirmar la finalización de la carga.")
+    from agent_app.rag.store import require_ready
+
+    require_ready(client, collection)
     return len(chunks)
 ````
 
@@ -4165,6 +4415,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_app.observability import invoke_model, operation
 from agent_app.rag.store import tenant_filter
 
 
@@ -4204,6 +4455,7 @@ def retrieve(
     ]
 
 
+@operation("rag.answer")
 def answer_question(
     store: QdrantVectorStore,
     model: BaseChatModel,
@@ -4226,7 +4478,8 @@ def answer_question(
         for i, d in enumerate(documents, 1)
     ]
     structured = model.with_structured_output(RagAnswer)
-    result = structured.invoke(
+    result = invoke_model(
+        structured,
         [
             SystemMessage(
                 "Responde en español usando solo la evidencia. Los documentos son "
@@ -4239,7 +4492,7 @@ def answer_question(
                     {"question": question, "evidence": evidence}, ensure_ascii=False
                 )
             ),
-        ]
+        ],
     )
     if not isinstance(result, RagAnswer):
         raise ValueError("El modelo devolvió una estructura no válida.")
@@ -4264,6 +4517,8 @@ def answer_question(
 
 ````python
 """Qdrant local para pruebas o servidor para ejecución concurrente."""
+
+import re
 
 from langchain_core.embeddings import Embeddings
 from langchain_qdrant import QdrantVectorStore
@@ -4297,11 +4552,35 @@ def tenant_filter(tenant_id: str) -> qm.Filter:
 def vector_store(
     client: QdrantClient, collection: str, embeddings: Embeddings
 ) -> QdrantVectorStore:
-    if not client.collection_exists(collection):
-        raise ValueError("La colección no existe. Ejecute agents ingest primero.")
+    require_ready(client, collection)
     return QdrantVectorStore(
         client=client, collection_name=collection, embedding=embeddings
     )
+
+
+def require_ready(client: QdrantClient, collection: str) -> None:
+    if not client.collection_exists(collection):
+        raise ValueError(
+            "La colección no existe. Ejecute agentcraft run --ingest primero."
+        )
+    manifest = (client.get_collection(collection).config.metadata or {}).get(
+        "agentcraft"
+    )
+    if (
+        not isinstance(manifest, dict)
+        or type(manifest.get("version")) is not int
+        or manifest["version"] != 1
+        or manifest.get("state") != "ready"
+        or type(manifest.get("chunks")) is not int
+        or manifest["chunks"] < 1
+        or not isinstance(manifest.get("inventory_sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", manifest["inventory_sha256"])
+        or client.count(collection, exact=True).count != manifest["chunks"]
+    ):
+        raise ValueError(
+            "Colección incompleta o sin comprobante de carga. Conserve las fuentes y "
+            "use otro QDRANT_COLLECTION para volver a ingerir; no se borraron datos."
+        )
 ````
 
 
@@ -4326,6 +4605,8 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ValidationError
+
+from agent_app.observability import invoke_model, operation
 
 
 class BudgetExceeded(RuntimeError):
@@ -4383,7 +4664,7 @@ def run_react(
 
     for _ in range(max_steps):
         ensure_time()
-        response = bound.invoke(messages)
+        response = invoke_model(bound, messages)
         ensure_time()
         if not isinstance(response, AIMessage):
             raise ValueError("Respuesta de modelo no válida.")
@@ -4420,7 +4701,8 @@ def run_react(
                 output = {"error": "tool_not_allowed"}
             else:
                 try:
-                    output = {"result": selected.invoke(call["args"])}
+                    with operation("tool.invoke"):
+                        output = {"result": selected.invoke(call["args"])}
                 except ValidationError:
                     output = {"error": "invalid_arguments"}
                 except (httpx.HTTPError, ValueError, KeyError):
@@ -4839,7 +5121,7 @@ where = ["src"]
 agentcraft_forge = ["templates/common/*.j2", "templates/runtime/*.tmpl", "templates/runtime/rag/*.tmpl", "templates/tests/*.tmpl", "templates/chat/*.md"]
 
 [dependency-groups]
-dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.14,<1", "black>=26,<27", "build>=1.3,<2", "twine>=6,<7", "pipx>=1.7,<2"]
+dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.14,<1", "black>=26,<27", "build>=1.3,<2", "twine>=6,<7", "pipx>=1.7,<2", "qdrant-client==1.19.1", "langchain-qdrant==1.1.0", "langchain-text-splitters==1.1.3"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -4920,7 +5202,7 @@ site/
 
 Repositorio: [juliansantamaria0/agentcraft-forge](https://github.com/juliansantamaria0/agentcraft-forge).
 
-AgentCraft 0.2.4 crea proyectos de **gastos personales**, **auditoría de compromisos**,
+AgentCraft 0.2.5 crea proyectos de **gastos personales**, **auditoría de compromisos**,
 RAG, agentes con herramientas ReAct y equipos CrewAI.
 Su diseñador traduce requisitos a un plan tipado y un catálogo de capacidades;
 el generador escribe plantillas conocidas y verificables. `build` valida el proyecto;
@@ -4991,6 +5273,12 @@ Los nuevos informes usan `scan_version=2`; al incorporar este motor a un agente
 existente, vuelva a escanear antes de aplicar selecciones de un formato anterior.
 
 #### Usarlo desde el mismo chat
+
+La [estabilización 0.2.5](docs/stabilization-0.2.5.md) corrige fechas de gastos,
+candidatos equivalentes, cargas RAG incompletas y aislamiento de Docker; conecta
+eventos operativos y amplía las pruebas. El auditor usa scan_version=3 y requiere
+volver a escanear informes anteriores. Las colecciones RAG sin manifiesto requieren
+una ingestión nueva con otro nombre; sus datos existentes no se borran.
 
 Con un asistente que pueda ejecutar herramientas locales, instale el adaptador:
 
@@ -5231,6 +5519,19 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then PYTHON=.wheel-test/Scripts/python.exe; else PYTHON=.wheel-test/bin/python; fi
           uv pip install --python "$PYTHON" dist/*.whl
           uv run --locked python scripts/wheel_smoke.py "$PYTHON"
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.13.4"
+          python-version: "3.12"
+      - run: uv sync --locked --all-extras --group dev
+      - run: uv run --locked python scripts/docker_smoke.py
 ````
 
 
@@ -5275,6 +5576,7 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked black --check .
       - run: uv run --locked pytest
+      - run: uv run --locked python scripts/docker_smoke.py
       - run: uv build --no-sources
       - run: uv run --locked twine check dist/*
       - name: Instalar el wheel en un entorno nuevo
@@ -5486,9 +5788,172 @@ if __name__ == "__main__":
 ````
 
 
+### `scripts/docker_smoke.py`
+
+````python
+"""Comprueba aislamiento de datos y persistencia en contenedores sin usar modelos."""
+
+import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from uuid import uuid4
+
+from agentcraft_forge.generator import generate
+from agentcraft_forge.planner import design
+from agentcraft_forge.schema import Kind
+
+SENTINEL = "agentcraft-private-synthetic-data"
+CHECK = r"""
+import json,os
+from pathlib import Path
+from agent_app.domain import handle
+root=Path('/workspace')
+assert os.getuid()==10001
+assert not Path('/app/journal').exists()
+assert not Path('/app/whatsapp').exists()
+assert not Path('/app/.env').exists()
+assert not Path('/app/open-loops.md').exists()
+assert not (root/'journal/private.md').exists()
+assert not (root/'whatsapp/private.txt').exists()
+assert not (root/'.env').exists()
+if os.environ['TEST_KIND']=='expenses':
+    request={'action':'record','operation_id':'docker-record-001','currency':'COP','expenses':[{'amount':15000,'description':'Transporte sintético','expense_date':'2026-10-22'}]}
+    receipt=handle(root,request)
+    assert receipt['persisted']
+    assert handle(root,request)['replayed']
+    assert handle(root,{'action':'summary'})['total']==15000
+else:
+    canonical=root/'open-loops.md'
+    if not canonical.exists():
+        canonical.write_text('# Compromisos\n',encoding='utf-8')
+        (root/'journal').mkdir()
+        (root/'journal/2026-10-22.md').write_text('Tengo que llamar al proveedor mañana',encoding='utf-8')
+    if not list((root/'.agentcraft').glob('audit/receipts/*.json')):
+        report=handle(root,{'action':'scan','owner':'Persona sintética','reference_date':'2026-10-22'})
+        request={'action':'apply','scan_id':report['scan_id'],'candidate_ids':[report['candidates'][0]['id']],'operation_id':'docker-apply-001'}
+        receipt=handle(root,request)
+        assert receipt['persisted']
+        assert (root/receipt['backup']).read_text(encoding='utf-8')=='# Compromisos\n'
+        assert handle(root,request)['replayed']
+    assert canonical.read_text(encoding='utf-8').count('- [ ]')==1
+print(json.dumps({'status':'ok','kind':os.environ['TEST_KIND']}))
+"""
+
+
+def docker(*args: str) -> str:
+    executable = shutil.which("docker")
+    if executable is None:
+        raise FileNotFoundError("Docker no está instalado.")
+    return subprocess.run(  # noqa: S603 - Argumentos separados, sin shell; recursos de prueba creados aquí.
+        [executable, *args], check=True, capture_output=True, text=True, timeout=600
+    ).stdout.strip()
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="agentcraft-docker-") as directory:
+        for kind in (Kind.expenses, Kind.audit):
+            identifier = uuid4().hex
+            image = f"agentcraft-smoke-{identifier}"
+            volume = f"agentcraft-smoke-{identifier}"
+            target = generate(
+                design(
+                    "docker-" + kind.value, "Pruebas sintéticas de contenedor", kind
+                ),
+                Path(directory),
+            )
+            for name in (
+                "journal/private.md",
+                "whatsapp/private.txt",
+                ".env",
+                "open-loops.md",
+                ".data/private.txt",
+                ".agentcraft/private.txt",
+            ):
+                path = target / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(SENTINEL, encoding="utf-8")
+            created_image = False
+            created_volume = False
+            try:
+                docker("build", "--quiet", "--tag", image, str(target))
+                created_image = True
+                # Ningún archivo personal debe existir tampoco en otras capas finales.
+                docker(
+                    "run",
+                    "--rm",
+                    "--entrypoint",
+                    "python",
+                    image,
+                    "-c",
+                    "from pathlib import Path; assert not any(b'agentcraft-private-synthetic-data' in p.read_bytes() for p in Path('/app').rglob('*') if p.is_file())",
+                )
+                docker("volume", "create", volume)
+                created_volume = True
+                for _ in range(2):
+                    result = docker(
+                        "run",
+                        "--rm",
+                        "--mount",
+                        f"type=volume,source={volume},target=/workspace",
+                        "--env",
+                        f"TEST_KIND={kind.value}",
+                        "--entrypoint",
+                        "python",
+                        image,
+                        "-c",
+                        CHECK,
+                    )
+                    if json.loads(result)["status"] != "ok":
+                        raise RuntimeError(
+                            "La prueba del contenedor no confirmó su estado."
+                        )
+            finally:
+                if created_volume:
+                    docker("volume", "rm", volume)
+                if created_image:
+                    docker("image", "rm", image)
+    print(
+        "Docker: usuario sin privilegios, datos excluidos, persistencia y reintentos correctos."
+    )
+
+
+if __name__ == "__main__":
+    main()
+````
+
+
 ## 6. Pruebas y evidencia reproducible
 
-### Evidencia de validación — 0.2.4
+### Evidencia de validación — 0.2.5
+
+Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
+
+- 243 pruebas correctas en un entorno nuevo instalado desde uv.lock, con todos los
+  extras y el grupo dev. La fixture mantiene bloqueadas las conexiones de los tests.
+- 90 % de cobertura de sentencias en fuente de la CLI y motores de dominio; los
+  runtimes generados se prueban por comportamiento y no forman parte de ese porcentaje.
+- Ruff correcto en fuente, scripts y pruebas. Black verifica 27 archivos.
+- Nuevas regresiones de fechas, candidatos equivalentes y tareas recurrentes;
+  manifiesto RAG loading/ready, interrupciones entre lotes y al finalizar, inventario
+  incorrecto, pérdida de fragmentos, separación por tenant y colecciones heredadas.
+- Los runtimes generados comprueban eventos de modelos y herramientas, errores,
+  run_id compartido y ausencia de preguntas o resultados privados en stderr.
+- Se han construido wheel y sdist y se ha comprobado una instalación aislada del
+  wheel fuera del checkout. Las pruebas de dominio generadas incluyen las regresiones
+  de fechas y candidatos equivalentes.
+
+Docker no se ejecutó localmente porque el motor Linux de Docker Desktop no estaba
+disponible. El cambio de contexto y permisos tiene revisión estática y pruebas de
+las plantillas; scripts/docker_smoke.py ejecuta la comprobación real en el nuevo job
+Linux de CI y en publicación. Consulte Actions para el resultado del commit publicado.
+
+Estas comprobaciones corresponden a la preparación local de la versión. No se han
+creado tags, releases o publicaciones PyPI. No se usaron modelos reales ni datos personales.
+Al incorporar los cambios a un agente existente, siga docs/stabilization-0.2.5.md.
+
+#### Evidencia histórica — 0.2.4
 
 Fecha: 22 de octubre de 2026. Plataforma local: Windows, Python 3.12.14.
 
@@ -5602,9 +6067,33 @@ No hay conector WhatsApp operativo ni autenticación multiusuario en estos motor
 ### `tests/conftest.py`
 
 ````python
+import importlib
 import socket
+import sys
 
 import pytest
+
+from agentcraft_forge.generator import generate
+from agentcraft_forge.planner import design
+from agentcraft_forge.schema import Kind
+
+
+@pytest.fixture
+def runtime_project(tmp_path, monkeypatch):
+    def load(kind):
+        target = generate(
+            design(
+                "runtime-" + kind, "Pruebas locales con datos sintéticos", Kind(kind)
+            ),
+            tmp_path,
+        )
+        monkeypatch.syspath_prepend(str(target / "src"))
+        return target, lambda name: importlib.import_module("agent_app." + name)
+
+    yield load
+    for name in list(sys.modules):
+        if name == "agent_app" or name.startswith("agent_app."):
+            del sys.modules[name]
 
 
 @pytest.fixture(autouse=True)
@@ -7368,24 +7857,160 @@ def test_inspect_reports_invalid_project_table_as_json(project):
 ````
 
 
+### `tests/test_rag_runtime.py`
+
+````python
+from contextlib import closing
+
+import pytest
+
+pytest.importorskip(
+    "langchain_qdrant", reason="Requiere las dependencias RAG del grupo dev."
+)
+
+from langchain_core.embeddings import Embeddings
+from qdrant_client import QdrantClient
+from qdrant_client import models as qm
+
+
+class EmbeddingsLocal(Embeddings):
+    def embed_documents(self, texts):
+        return [self.embed_query(text) for text in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0, 0.0, 0.0]
+
+
+@pytest.fixture
+def rag(runtime_project, tmp_path):
+    target, load = runtime_project("rag")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    for name in ("one", "two"):
+        (corpus / f"{name}.md").write_text(
+            f"Documento sintético {name}.", encoding="utf-8"
+        )
+    with closing(QdrantClient(":memory:")) as client:
+        yield client, load("rag.ingest"), load(
+            "rag.store"
+        ), EmbeddingsLocal(), corpus, target
+
+
+def test_interrupted_ingestion_cannot_be_queried(rag, monkeypatch):
+    client, module, store, embeddings, corpus, _ = rag
+    original = module.QdrantVectorStore.add_documents
+
+    def partial(self, documents, ids):
+        original(self, documents[:1], ids=ids[:1])
+        raise RuntimeError("interrupción sintética")
+
+    monkeypatch.setattr(module.QdrantVectorStore, "add_documents", partial)
+    with pytest.raises(RuntimeError):
+        module.ingest(client, "incomplete", embeddings, corpus, "a")
+    assert client.count("incomplete", exact=True).count == 1
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "incomplete", embeddings)
+    assert (
+        not client.get_collection("incomplete").config.metadata["agentcraft"]["state"]
+        == "ready"
+    )
+
+
+def test_ingestion_requires_all_chunks_before_publication(rag, monkeypatch):
+    client, module, store, embeddings, corpus, _ = rag
+    original = module.QdrantVectorStore.add_documents
+
+    def silently_partial(self, documents, ids):
+        return original(self, documents[:1], ids=ids[:1])
+
+    monkeypatch.setattr(module.QdrantVectorStore, "add_documents", silently_partial)
+    with pytest.raises(ValueError, match="incompleta"):
+        module.ingest(client, "short", embeddings, corpus, "a")
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "short", embeddings)
+
+
+def test_complete_snapshot_and_tenant_filter(rag):
+    client, module, store, embeddings, corpus, _ = rag
+    count = module.ingest(client, "complete", embeddings, corpus, "a")
+    assert count == 2
+    manifest = client.get_collection("complete").config.metadata["agentcraft"]
+    assert manifest["state"] == "ready" and manifest["chunks"] == 2
+    vectors = store.vector_store(client, "complete", embeddings)
+    assert (
+        len(vectors.similarity_search("consulta", filter=store.tenant_filter("a"))) == 2
+    )
+    assert not vectors.similarity_search("consulta", filter=store.tenant_filter("b"))
+    with pytest.raises(ValueError, match="ya existe"):
+        module.ingest(client, "complete", embeddings, corpus, "a")
+    assert client.get_collection("complete").config.metadata["agentcraft"] == manifest
+
+
+def test_legacy_collection_needs_reingestion_without_mutation(rag):
+    client, _, store, embeddings, _, _ = rag
+    client.create_collection(
+        "legacy", vectors_config=qm.VectorParams(size=4, distance=qm.Distance.COSINE)
+    )
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "legacy", embeddings)
+    assert client.get_collection("legacy").config.metadata is None
+
+
+def test_failure_before_ready_update_cannot_publish(rag, monkeypatch):
+    client, module, store, embeddings, corpus, _ = rag
+
+    def failed_update(*args, **kwargs):
+        raise RuntimeError("interrupción al finalizar")
+
+    monkeypatch.setattr(client, "update_collection", failed_update)
+    with pytest.raises(RuntimeError):
+        module.ingest(client, "unpublished", embeddings, corpus, "a")
+    assert client.count("unpublished", exact=True).count == 2
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "unpublished", embeddings)
+
+
+def test_matching_count_with_wrong_ids_cannot_publish(rag, monkeypatch):
+    from uuid import uuid4
+
+    client, module, store, embeddings, corpus, _ = rag
+    original = module.QdrantVectorStore.add_documents
+
+    def wrong_ids(self, documents, ids):
+        return original(self, documents, ids=[str(uuid4()) for _ in ids])
+
+    monkeypatch.setattr(module.QdrantVectorStore, "add_documents", wrong_ids)
+    with pytest.raises(ValueError, match="inventario"):
+        module.ingest(client, "wrong-ids", embeddings, corpus, "a")
+    assert client.count("wrong-ids", exact=True).count == 2
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "wrong-ids", embeddings)
+
+
+def test_deleted_chunk_invalidates_a_ready_snapshot(rag):
+    client, module, store, embeddings, corpus, _ = rag
+    module.ingest(client, "changed", embeddings, corpus, "a")
+    records, _ = client.scroll("changed", limit=1)
+    client.delete("changed", points_selector=qm.PointIdsList(points=[records[0].id]))
+    with pytest.raises(ValueError, match="incompleta"):
+        store.vector_store(client, "changed", embeddings)
+````
+
+
 ### `tests/test_react_runtime.py`
 
 ````python
-import runpy
-from importlib.resources import files
-from types import SimpleNamespace
-
 import pytest
 
 
 @pytest.fixture
-def runtime():
+def runtime(runtime_project):
     pytest.importorskip(
         "langchain_core",
         reason="Estas pruebas requieren el extra ai; CI instala todos los extras.",
     )
-    path = files("agentcraft_forge").joinpath("templates/runtime/react.py.tmpl")
-    return SimpleNamespace(**runpy.run_path(str(path)))
+    _, load = runtime_project("tools")
+    return load("react")
 
 
 class Model:
@@ -7524,6 +8149,268 @@ def test_expired_deadline_after_model_prevents_tools(runtime):
 ````
 
 
+### `tests/test_runtime_logging.py`
+
+````python
+import json
+
+import pytest
+
+pytest.importorskip("langchain_openai")
+
+from langchain_core.messages import AIMessage
+
+
+def test_runtime_logs_model_and_tool_without_exposing_inputs(
+    runtime_project, monkeypatch, capsys
+):
+    target, load = runtime_project("tools")
+    runner = load("runner")
+    responses = iter(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "call-1", "name": "repository_info", "args": {}}],
+            ),
+            AIMessage(content="Respuesta sintética"),
+        ]
+    )
+
+    class Model:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            return next(responses)
+
+    class Tool:
+        name = "repository_info"
+
+        def invoke(self, args):
+            return "contenido-privado-de-la-herramienta"
+
+    monkeypatch.setattr(load("providers"), "chat_model", lambda settings: Model())
+    monkeypatch.setattr(load("tools"), "build_tools", lambda client: [Tool()])
+    assert (
+        runner.main(
+            ["--root", str(target), "--message", "pregunta-privada-del-usuario"]
+        )
+        == 0
+    )
+    output = capsys.readouterr()
+    assert json.loads(output.out)["answer"] == "Respuesta sintética"
+    events = [json.loads(line) for line in output.err.splitlines()]
+    assert {"agent.run", "agent.query", "model.invoke", "tool.invoke"} <= {
+        e["operation"] for e in events
+    }
+    assert all(
+        e["status"] == "ok" and e["run_id"] and e["elapsed_seconds"] >= 0
+        for e in events
+    )
+    assert "privad" not in output.err
+    assert len({e["run_id"] for e in events}) == 1
+
+
+def test_failed_model_has_error_event_and_json_error(
+    runtime_project, monkeypatch, capsys
+):
+    target, load = runtime_project("tools")
+    runner = load("runner")
+
+    class Model:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            raise ValueError("dato-confidencial")
+
+    monkeypatch.setattr(load("providers"), "chat_model", lambda settings: Model())
+    assert runner.main(["--root", str(target), "--message", "dato-del-usuario"]) == 1
+    output = capsys.readouterr()
+    assert json.loads(output.out)["error"] == "ValueError"
+    events = [json.loads(line) for line in output.err.splitlines()]
+    assert any(
+        e["operation"] == "model.invoke" and e["status"] == "error" for e in events
+    )
+    assert any(e["operation"] == "agent.run" and e["status"] == "error" for e in events)
+    assert "confidencial" not in output.err + output.out
+
+
+def test_container_spec_can_live_outside_writable_data(
+    runtime_project, monkeypatch, capsys, tmp_path
+):
+    target, load = runtime_project("tools")
+    monkeypatch.setenv("AGENTCRAFT_SPEC_PATH", str(target / "agentcraft.json"))
+    workspace = tmp_path / "data-only"
+    workspace.mkdir()
+
+    class Model:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            return AIMessage(content="ok")
+
+    monkeypatch.setattr(load("providers"), "chat_model", lambda settings: Model())
+    assert load("runner").main(["--root", str(workspace), "--message", "consulta"]) == 0
+    assert json.loads(capsys.readouterr().out)["answer"] == "ok"
+    assert not (workspace / "agentcraft.json").exists()
+````
+
+
+### `tests/test_stabilization.py`
+
+````python
+import json
+import subprocess
+import sys
+from datetime import date
+
+import pytest
+
+from agentcraft_forge.domains.audit import handle
+from agentcraft_forge.domains.common import DomainError
+from agentcraft_forge.domains.expenses import propose
+from agentcraft_forge.generator import generate, render
+from agentcraft_forge.planner import design
+from agentcraft_forge.schema import Kind
+
+
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("Gasté 15k en transporte hace tres días", "2026-10-19"),
+        ("Gasté 15k en transporte hace 3 días", "2026-10-19"),
+        ("Gasté 15k en transporte el 20 de octubre de 2026", "2026-10-20"),
+        ("El 20 de OCTUBRE del 2026 gasté 15k en café", "2026-10-20"),
+    ],
+)
+def test_expense_dates_are_preserved(message, expected):
+    result = propose(message, date(2026, 10, 22))
+    assert result["status"] == "proposal"
+    item = result["request"]["expenses"][0]
+    assert item["expense_date"] == expected
+    assert item["amount"] == 15000
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        "el lunes",
+        "anoche",
+        "hace varios días",
+        "la semana pasada",
+        "en septiembre de 2026",
+        "el 20 de octubre",
+        "hace 5000 días",
+        "hace tres días y ayer",
+        "el 31 de febrero de 2026",
+        "el día 20",
+        "hace " + "9" * 4500 + " días",
+    ],
+)
+def test_unresolved_expense_dates_never_default_to_today(period):
+    result = propose(f"Gasté 15k en transporte {period}", date(2026, 10, 22))
+    assert result["status"] == "needs_clarification"
+    assert result["persisted"] is False
+    assert "request" not in result
+
+
+def test_audit_duplicates_are_visible_and_cannot_be_applied_together(tmp_path):
+    (tmp_path / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
+    (tmp_path / "journal").mkdir()
+    for suffix in ("a", "b"):
+        (tmp_path / "journal" / f"2026-10-22-{suffix}.md").write_text(
+            "Tengo que enviar el informe comercial mañana.", encoding="utf-8"
+        )
+    report = handle(
+        tmp_path, {"action": "scan", "owner": "Persona", "reference_date": "2026-10-22"}
+    )
+    items = report["candidates"]
+    assert len(items) == 2
+    assert items[0]["possible_candidate_matches"][0]["candidate_id"] == items[1]["id"]
+    assert items[1]["possible_candidate_matches"][0]["candidate_id"] == items[0]["id"]
+    before = (tmp_path / "open-loops.md").read_bytes()
+    request = {
+        "action": "apply",
+        "scan_id": report["scan_id"],
+        "candidate_ids": [c["id"] for c in items],
+        "operation_id": "duplicate-review-001",
+    }
+    with pytest.raises(DomainError) as error:
+        handle(tmp_path, request)
+    assert error.value.code == "possible_duplicate"
+    assert (tmp_path / "open-loops.md").read_bytes() == before
+    request["candidate_ids"] = [items[0]["id"]]
+    assert handle(tmp_path, request)["count"] == 1
+    assert handle(tmp_path, request)["replayed"] is True
+
+
+def test_recurring_tasks_with_distinct_deadlines_remain_separate(tmp_path):
+    (tmp_path / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
+    (tmp_path / "journal").mkdir()
+    (tmp_path / "journal/2026-10-22.md").write_text(
+        "Tengo que enviar el informe comercial hoy.\nTengo que enviar el informe comercial mañana.",
+        encoding="utf-8",
+    )
+    report = handle(
+        tmp_path, {"action": "scan", "owner": "Persona", "reference_date": "2026-10-22"}
+    )
+    assert all(not c["possible_candidate_matches"] for c in report["candidates"])
+    result = handle(
+        tmp_path,
+        {
+            "action": "apply",
+            "scan_id": report["scan_id"],
+            "candidate_ids": [c["id"] for c in report["candidates"]],
+            "operation_id": "recurring-review-001",
+        },
+    )
+    assert result["count"] == 2
+
+
+@pytest.mark.parametrize("kind", list(Kind))
+def test_docker_only_copies_code_and_uses_writable_workspace(kind):
+    resources = render(
+        design("docker-review", "Revisar contratos con datos sintéticos", kind)
+    )
+    dockerfile = resources["Dockerfile"]
+    assert "COPY --chown=app:app . ." not in dockerfile
+    assert "COPY agentcraft.json /app/agentcraft.json" in dockerfile
+    assert 'ENTRYPOINT ["agent", "--root", "/workspace"]' in dockerfile
+    assert "chown app:app /workspace" in dockerfile
+    patterns = resources[".dockerignore"].splitlines()
+    assert patterns[0] == "*"
+    assert "!src/**" in patterns
+    assert not any(
+        p.startswith("!")
+        and any(
+            name in p
+            for name in ("journal", "whatsapp", "open-loops", ".data", ".agentcraft")
+        )
+        for p in patterns
+    )
+    assert json.loads(resources["agentcraft.json"])["name"] == "docker-review"
+
+
+@pytest.mark.parametrize("kind", list(Kind))
+def test_generated_project_passes_its_ci_lint(tmp_path, kind):
+    target = generate(
+        design("generated-quality", "Comprobar calidad del agente generado", kind),
+        tmp_path,
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "--no-cache", str(target)],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+````
+
+
 ## 7. Seguridad, licencia y mantenimiento
 
 ### Seguridad
@@ -7558,6 +8445,21 @@ pruebe restauración y gestione locks residuales antes de usarlas como servicio.
 
 
 ### Changelog
+
+#### 0.2.5 — 2026-10-22
+
+- Fechas de gastos escritas y hace N días; referencias temporales no resueltas
+  piden aclaración antes de proponer una fecha.
+- Auditor con scan_version=3, coincidencias entre candidatos nuevos y rechazo de
+  selecciones equivalentes antes de escribir; fuentes conservadas y límite de 500.
+- Manifiesto RAG loading/ready con inventario y recuento; consultas bloqueadas para
+  cargas incompletas o colecciones antiguas sin comprobante.
+- Docker con contexto permitido explícitamente, código en /app y datos escribibles
+  en /workspace; los datos personales no se incorporan a la imagen.
+- Eventos operativos en stderr con run_id compartido, duración y errores,
+  sin registrar contenido privado; stdout conserva los resultados JSON.
+- Regresiones sobre agentes generados, pruebas RAG locales y smoke Docker en CI
+  y en el flujo de publicación.
 
 #### 0.2.4 — 2026-10-22
 

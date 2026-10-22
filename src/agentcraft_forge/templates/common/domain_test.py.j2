@@ -5,9 +5,17 @@ import json
 [% endif %]
 import tempfile
 import unittest
+[% if kind == 'expenses' %]
+from datetime import date
+[% endif %]
 from pathlib import Path
 
+[% if kind == 'expenses' %]
+from agent_app.domain import handle, propose
+[% else %]
 from agent_app.domain import handle
+from agent_app.domain_common import DomainError
+[% endif %]
 
 
 class DomainContract(unittest.TestCase):
@@ -37,4 +45,25 @@ class DomainContract(unittest.TestCase):
             self.assertFalse(result["persisted"])
             self.assertEqual(len(result["candidates"]), 2)
             self.assertEqual(result["candidates"][1]["source"]["message_line"], 2)
+[% endif %]
+
+    def test_review_regression(self):
+[% if kind == 'expenses' %]
+        result = propose("Gasté 15k en transporte hace tres días", date(2026, 10, 22))
+        self.assertEqual(result["request"]["expenses"][0]["expense_date"], "2026-10-19")
+        self.assertEqual(propose("Gasté 15k en transporte el lunes", date(2026, 10, 22))["status"], "needs_clarification")
+[% else %]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "open-loops.md").write_text("# Compromisos\n", encoding="utf-8")
+            (root / "journal").mkdir()
+            for suffix in ("a", "b"):
+                (root / "journal" / f"2026-10-22-{suffix}.md").write_text("Tengo que llamar al proveedor mañana", encoding="utf-8")
+            report = handle(root, {"action": "scan", "owner": "Persona de prueba", "reference_date": "2026-10-22"})
+            self.assertEqual(len(report["candidates"]), 2)
+            self.assertTrue(report["candidates"][0]["possible_candidate_matches"])
+            request = {"action": "apply", "scan_id": report["scan_id"], "candidate_ids": [item["id"] for item in report["candidates"]], "operation_id": "generated-duplicate-001"}
+            with self.assertRaises(DomainError):
+                handle(root, request)
+            self.assertEqual((root / "open-loops.md").read_text(encoding="utf-8"), "# Compromisos\n")
 [% endif %]

@@ -4,9 +4,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip install --no-cache-dir . && \
     groupadd --gid 10001 app && useradd --uid 10001 --gid app --create-home app
-COPY --chown=app:app . .
-RUN mkdir -p /app/.data && chown app:app /app/.data
-ENV PYTHONUNBUFFERED=1 CREWAI_TELEMETRY_DISABLED=true OTEL_SDK_DISABLED=true
+COPY agentcraft.json /app/agentcraft.json
+WORKDIR /workspace
+RUN mkdir -p /workspace/.data /workspace/.agentcraft && \
+    chown app:app /workspace /workspace/.data /workspace/.agentcraft
+ENV PYTHONUNBUFFERED=1 CREWAI_TELEMETRY_DISABLED=true OTEL_SDK_DISABLED=true AGENTCRAFT_SPEC_PATH=/app/agentcraft.json
 USER 10001:10001
-ENTRYPOINT ["agent", "--root", "/app"]
+ENTRYPOINT ["agent", "--root", "/workspace"]
 

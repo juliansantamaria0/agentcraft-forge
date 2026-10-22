@@ -20,7 +20,9 @@ agentcraft run --message "¿Cuánto tarda un ticket de prioridad alta?"
 
 Usa Qdrant en disco por defecto, para un proceso de desarrollo. Para concurrencia,
 configure QDRANT_URL y credenciales de servidor. Cada ingestión necesita una colección
-nueva; evalúe el snapshot antes de promoverlo a lectores de producción.
+nueva. Se marca ready solo al completar y verificar la carga. Las consultas rechazan
+colecciones incompletas o antiguas sin manifiesto; conserve las fuentes y use otro
+QDRANT_COLLECTION para volver a ingerir. No se borran colecciones al reintentar.
 [% elif kind == 'tools' %]
 ```console
 agentcraft run --message "Consulta qdrant/qdrant y el clima en Bogota"
@@ -61,4 +63,10 @@ restauración Qdrant, cancelación del worker y revisión de las condiciones de 
 Las citas se validan por ID; la implicación factual requiere evaluación adicional.
 Consulte `docs/architecture.md`. No se incluyen secretos, modelos entrenados ni un
 servidor HTTP autenticado.
+
+Docker contiene solo código y metadatos. Monte almacenamiento persistente en
+/workspace con permisos para UID/GID 10001; las credenciales se aportan al ejecutar.
+El manifiesto de configuración se lee de /app/agentcraft.json dentro de la imagen.
+Los eventos operativos se escriben en stderr, con run_id compartido, duración y
+estado, sin preguntas ni resultados privados. stdout conserva los resultados JSON.
 

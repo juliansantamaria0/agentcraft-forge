@@ -1,5 +1,7 @@
 """Qdrant local para pruebas o servidor para ejecución concurrente."""
 
+import re
+
 from langchain_core.embeddings import Embeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -32,8 +34,32 @@ def tenant_filter(tenant_id: str) -> qm.Filter:
 def vector_store(
     client: QdrantClient, collection: str, embeddings: Embeddings
 ) -> QdrantVectorStore:
-    if not client.collection_exists(collection):
-        raise ValueError("La colección no existe. Ejecute agents ingest primero.")
+    require_ready(client, collection)
     return QdrantVectorStore(
         client=client, collection_name=collection, embedding=embeddings
     )
+
+
+def require_ready(client: QdrantClient, collection: str) -> None:
+    if not client.collection_exists(collection):
+        raise ValueError(
+            "La colección no existe. Ejecute agentcraft run --ingest primero."
+        )
+    manifest = (client.get_collection(collection).config.metadata or {}).get(
+        "agentcraft"
+    )
+    if (
+        not isinstance(manifest, dict)
+        or type(manifest.get("version")) is not int
+        or manifest["version"] != 1
+        or manifest.get("state") != "ready"
+        or type(manifest.get("chunks")) is not int
+        or manifest["chunks"] < 1
+        or not isinstance(manifest.get("inventory_sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", manifest["inventory_sha256"])
+        or client.count(collection, exact=True).count != manifest["chunks"]
+    ):
+        raise ValueError(
+            "Colección incompleta o sin comprobante de carga. Conserve las fuentes y "
+            "use otro QDRANT_COLLECTION para volver a ingerir; no se borraron datos."
+        )

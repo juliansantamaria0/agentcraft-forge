@@ -60,14 +60,6 @@ def ingest(
         chunk_size=800, chunk_overlap=120, add_start_index=True
     )
     chunks = splitter.split_documents(load_documents(directory, tenant_id))
-    dimensions = len(embeddings.embed_query("dimension probe"))
-    client.create_collection(
-        collection_name=collection,
-        vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
-    )
-    store = QdrantVectorStore(
-        client=client, collection_name=collection, embedding=embeddings
-    )
     ids = [
         str(
             uuid5(
@@ -78,5 +70,45 @@ def ingest(
         )
         for doc in chunks
     ]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("El inventario de fragmentos no es válido.")
+    manifest = {
+        "version": 1,
+        "state": "loading",
+        "chunks": len(chunks),
+        "inventory_sha256": hashlib.sha256("\n".join(ids).encode()).hexdigest(),
+    }
+    dimensions = len(embeddings.embed_query("dimension probe"))
+    client.create_collection(
+        collection_name=collection,
+        vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
+        metadata={"agentcraft": manifest},
+    )
+    store = QdrantVectorStore(
+        client=client, collection_name=collection, embedding=embeddings
+    )
     store.add_documents(chunks, ids=ids)
+    if client.count(collection, exact=True).count != len(chunks):
+        raise ValueError("Carga incompleta; no se habilitarán consultas.")
+    for offset in range(0, len(ids), 256):
+        expected = set(ids[offset : offset + 256])
+        actual = client.retrieve(
+            collection_name=collection,
+            ids=list(expected),
+            with_payload=False,
+            with_vectors=False,
+        )
+        if {str(point.id) for point in actual} != expected:
+            raise ValueError(
+                "El inventario guardado está incompleto; no se habilitarán consultas."
+            )
+    # Un fallo o terminación previa conserva loading. No se borran datos al reintentar.
+    if not client.update_collection(
+        collection_name=collection,
+        metadata={"agentcraft": {**manifest, "state": "ready"}},
+    ):
+        raise ValueError("No se pudo confirmar la finalización de la carga.")
+    from agent_app.rag.store import require_ready
+
+    require_ready(client, collection)
     return len(chunks)

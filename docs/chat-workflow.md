@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.4
+# Operación por chat y comprobantes — 0.2.5
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -237,7 +237,7 @@ owner es declarada y no constituye autenticación.
 
 La lectura verifica el hash del contenido contra el inventario y vuelve a comprobar
 el inventario antes de guardar el informe. Si detecta cambios, devuelve sources_changed
-y exige volver a auditar. Los informes usan scan_version=2, incluido en su ID: un
+y exige volver a auditar. Los informes usan scan_version=3, incluido en su ID: un
 cambio de formato no sobrescribe el informe previo. Apply rechaza informes de otro
 formato con unsupported_scan; genere y revise uno nuevo al actualizar el motor.
 Un comprobante ya confirmado sigue siendo histórico y los reintentos conservan su ID.
