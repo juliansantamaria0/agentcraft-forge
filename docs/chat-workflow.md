@@ -1,4 +1,4 @@
-# Operación por chat y comprobantes — 0.2.5
+# Operación por chat y comprobantes
 
 El asistente del chat interpreta la intención y usa la CLI como herramienta. El motor
 generado decide si la solicitud es válida, ejecuta y devuelve el resultado. El asistente
@@ -28,11 +28,21 @@ Para una instalación ya existente, `pipx reinstall agentcraft-forge` repite su 
 original. Si quiere cambiar de un wheel local al repositorio, desinstale esa distribución
 y vuelva a instalar usando la URL anterior. El adaptador es un archivo SKILL.md; la
 compatibilidad y recarga dependen del cliente. Para Codex global puede seleccionar
-`$HOME/.codex/skills` en PowerShell. Para Antigravity seleccione el directorio que tenga
-configurado su instalación; no se presume que todos los clientes usen la misma ruta.
+`$HOME/.agents/skills` en PowerShell; Claude Code usa `~/.claude/skills`.
+Antigravity App/IDE usa `~/.gemini/config/skills` y su CLI
+`~/.gemini/antigravity-cli/skills`. Pase la ruta absoluta resuelta de su usuario.
+Consulte las ubicaciones y la activación en la documentación de
+[Codex](https://developers.openai.com/codex/skills),
+[Claude Code](https://code.claude.com/docs/en/skills) y
+[Antigravity](https://antigravity.google/docs/skills).
 
 Si existe una habilidad personalizada, el instalador falla para conservarla. Revise y
 actualice esa copia explícitamente. Instalar el paquete no activa habilidades por sí solo.
+
+El asistente anfitrión y el runtime generado tienen consumos distintos. Para trabajar
+en varios contextos y limitar el gasto por mensaje, consulte
+[contextos y consumo](contexts-and-cost.md). El programa opera sobre un proyecto local;
+un cambio de asistente no transfiere ni sincroniza automáticamente sus datos.
 
 ## Creación demostrable
 

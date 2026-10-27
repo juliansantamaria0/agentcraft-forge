@@ -14,6 +14,23 @@ def test_version():
     assert __version__ in result.output
 
 
+def test_build_explains_missing_catalog_file_without_exposing_arbitrary_error(tmp_path):
+    from agentcraft_forge.generator import generate
+    from agentcraft_forge.planner import design
+    from agentcraft_forge.schema import Kind
+
+    root = generate(
+        design("diagnostic", "Consultar políticas internas", Kind.rag), tmp_path
+    )
+    (root / ".env.example").unlink()
+    result = runner.invoke(app, ["build", "--project", str(root)])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["code"] == "required_file_missing_or_linked"
+    assert payload["path"] == ".env.example"
+    assert "agentcraft build" in payload["message"]
+
+
 def test_full_offline_cli(tmp_path):
     result = runner.invoke(
         app,

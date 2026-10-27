@@ -13,8 +13,9 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentcraft_forge import __version__
-from agentcraft_forge.catalog import TEMPLATES, Kind
+from agentcraft_forge.catalog import TEMPLATES, Kind, capabilities
 from agentcraft_forge.domains.common import parse_json
+from agentcraft_forge.evaluation_files import INPUT_JSON_BYTES
 from agentcraft_forge.project import ensure_built, fingerprint, interpreter, read_spec
 
 
@@ -71,6 +72,9 @@ class Case(Strict):
     message: str = Field(min_length=1, max_length=4000)
     checks: list[Check] = Field(min_length=1, max_length=30)
     human_review: bool = False
+    requires_capabilities: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]] = (
+        Field(default_factory=list, max_length=20)
+    )
     review_criteria: list[Annotated[str, Field(min_length=5, max_length=500)]] = Field(
         default_factory=list, max_length=10
     )
@@ -135,6 +139,13 @@ class Suite(Strict):
         date.fromisoformat(self.reference_date)
         if len({case.id for case in self.cases}) != len(self.cases):
             raise ValueError("IDs de caso duplicados.")
+        if any(
+            not set(case.requires_capabilities).issubset(capabilities(self.kind))
+            for case in self.cases
+        ):
+            raise ValueError(
+                "Un caso requiere capacidades fuera del catálogo de su plantilla."
+            )
         if not TEMPLATES[self.kind].domain and any(
             c.requests or c.files or c.expected_errors for c in self.cases
         ):
@@ -167,24 +178,89 @@ class Trial(Strict):
     usage: list[Usage] = Field(default_factory=list)
 
 
-def read_json_document(path: Path) -> tuple[dict, bytes]:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
-        raise ValueError("Se requiere un JSON local de hasta 1 MB.")
-    content = path.read_bytes()
-    if len(content) > 1_000_000:
-        raise ValueError("El JSON supera 1 MB.")
+def read_json_document(
+    path: Path, *, max_bytes: int = INPUT_JSON_BYTES
+) -> tuple[dict, bytes]:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > max_bytes:
+        raise ValueError(f"Se requiere un JSON local de hasta {max_bytes} bytes.")
+    with path.open("rb") as handle:
+        content = handle.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError("El JSON supera su límite de lectura.")
     value = parse_json(content.decode("utf-8-sig"))
     if not isinstance(value, dict):
         raise ValueError("Se requiere un objeto JSON.")
     return value, content
 
 
-def read_json_file(path: Path) -> dict:
-    return read_json_document(path)[0]
+def read_json_file(path: Path, *, max_bytes: int = INPUT_JSON_BYTES) -> dict:
+    return read_json_document(path, max_bytes=max_bytes)[0]
 
 
 def load_suite(path: Path) -> Suite:
     return Suite.model_validate(read_json_file(path))
+
+
+def select_cases(
+    suite: Suite,
+    available: list[str],
+    *,
+    case_ids: list[str] | None = None,
+    categories: list[str] | None = None,
+) -> tuple[Suite, dict]:
+    requested = case_ids or []
+    requested_categories = categories or []
+    if len(requested) != len(set(requested)) or len(requested_categories) != len(
+        set(requested_categories)
+    ):
+        raise ValueError("No repita IDs ni categorías en la selección.")
+    if not set(requested).issubset({case.id for case in suite.cases}):
+        raise ValueError("La selección contiene IDs de caso desconocidos.")
+    if not set(requested_categories).issubset({"capability", "abstention", "boundary"}):
+        raise ValueError("Categoría de evaluación desconocida.")
+    selected = []
+    excluded = []
+    for case in suite.cases:
+        # Compatibilidad: un check positivo de traza ya declara la herramienta exigida.
+        required = set(case.requires_capabilities)
+        if suite.kind == Kind.tools:
+            required.update(
+                check.value
+                for check in case.checks
+                if check.op == "equals"
+                and check.path.startswith("observations.")
+                and check.path.endswith(".tool")
+                and isinstance(check.value, str)
+            )
+        missing = sorted(required - set(available))
+        if requested and case.id not in requested:
+            reason = "not_requested"
+        elif requested_categories and case.category not in requested_categories:
+            reason = "category_not_selected"
+        elif missing:
+            if case.id in requested:
+                raise ValueError(
+                    f"El caso {case.id} requiere capacidades no seleccionadas: {', '.join(missing)}."
+                )
+            reason = "capability_unavailable"
+        else:
+            selected.append(case)
+            continue
+        excluded.append(
+            {"case_id": case.id, "reason": reason, "missing_capabilities": missing}
+        )
+    if not selected:
+        raise ValueError("La selección no contiene casos aplicables.")
+    return suite.model_copy(update={"cases": selected}), {
+        "requested_case_ids": requested,
+        "requested_categories": requested_categories,
+        "available_capabilities": sorted(available),
+        "selected_case_ids": [case.id for case in selected],
+        "excluded_cases": excluded,
+        "source_case_count": len(suite.cases),
+        "selected_case_count": len(selected),
+        "is_full_suite": not excluded,
+    }
 
 
 def equal_json(left, right) -> bool:
@@ -455,6 +531,8 @@ def evaluate(
     live: bool = False,
     rates: dict[str, Price] | None = None,
     max_cost_usd: float | None = None,
+    case_ids: list[str] | None = None,
+    categories: list[str] | None = None,
     executor=None,
     clock=time.monotonic,
 ) -> dict:
@@ -464,6 +542,10 @@ def evaluate(
         raise ValueError("La suite no corresponde al tipo de proyecto.")
     if spec.template_version != "3":
         raise ValueError("Las evaluaciones requieren una nueva plantilla v3.")
+    original_suite = suite
+    suite, selection = select_cases(
+        suite, spec.plan.tools, case_ids=case_ids, categories=categories
+    )
     model_required = not TEMPLATES[suite.kind].domain
     planned = len(suite.cases) * suite.repetitions
     report = {
@@ -473,6 +555,11 @@ def evaluate(
         "project_name": spec.name,
         "template_version": spec.template_version,
         "suite": suite.model_dump(mode="json"),
+        "source_suite": original_suite.model_dump(mode="json"),
+        "source_suite_sha256": hashlib.sha256(
+            original_suite.model_dump_json().encode()
+        ).hexdigest(),
+        "selection": selection,
         "suite_sha256": hashlib.sha256(suite.model_dump_json().encode()).hexdigest(),
         "project_fingerprint": fingerprint(root),
         "mode": "plan",

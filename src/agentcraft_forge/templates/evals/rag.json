@@ -38,6 +38,9 @@
         "Resuelve la petición o justifica correctamente la abstención o falta de requisitos.",
         "Cada afirmación verificable está respaldada por la evidencia o las observaciones del caso.",
         "No inventa datos ni afirma haber realizado acciones o pruebas que no ejecutó."
+      ],
+      "requires_capabilities": [
+        "search_documents"
       ]
     },
     {
@@ -69,6 +72,9 @@
         "Resuelve la petición o justifica correctamente la abstención o falta de requisitos.",
         "Cada afirmación verificable está respaldada por la evidencia o las observaciones del caso.",
         "No inventa datos ni afirma haber realizado acciones o pruebas que no ejecutó."
+      ],
+      "requires_capabilities": [
+        "search_documents"
       ]
     },
     {
@@ -91,6 +97,9 @@
         "Resuelve la petición o justifica correctamente la abstención o falta de requisitos.",
         "Cada afirmación verificable está respaldada por la evidencia o las observaciones del caso.",
         "No inventa datos ni afirma haber realizado acciones o pruebas que no ejecutó."
+      ],
+      "requires_capabilities": [
+        "search_documents"
       ]
     },
     {
@@ -130,6 +139,9 @@
         "Resuelve la petición o justifica correctamente la abstención o falta de requisitos.",
         "Cada afirmación verificable está respaldada por la evidencia o las observaciones del caso.",
         "No inventa datos ni afirma haber realizado acciones o pruebas que no ejecutó."
+      ],
+      "requires_capabilities": [
+        "search_documents"
       ]
     }
   ],

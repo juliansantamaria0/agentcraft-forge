@@ -17,10 +17,21 @@ from agentcraft_forge.schema import AgentSpec, Kind
 MAX_SOURCE_BYTES = 1_000_000
 
 
+class ProjectValidationError(ValueError):
+    """Diagnóstico conocido cuyos detalles proceden de rutas del catálogo."""
+
+    def __init__(self, code: str, relative_path: str):
+        self.code = code
+        self.relative_path = relative_path
+        super().__init__(f"Archivo requerido ausente o enlazado: {relative_path}")
+
+
 def read_spec(root: Path) -> AgentSpec:
     path = root / "agentcraft.json"
     if path.is_symlink() or not path.is_file():
-        raise ValueError("Falta agentcraft.json o es un enlace simbólico.")
+        raise ProjectValidationError(
+            "required_file_missing_or_linked", "agentcraft.json"
+        )
     if path.stat().st_size > 100_000:
         raise ValueError("El manifiesto supera el tamaño permitido.")
     return AgentSpec.model_validate(parse_json(path.read_text(encoding="utf-8-sig")))
@@ -66,7 +77,7 @@ def validate(root: Path) -> dict:
     for relative in expected:
         path = root / relative
         if path.is_symlink() or not path.is_file():
-            raise ValueError(f"Archivo requerido ausente o enlazado: {relative}")
+            raise ProjectValidationError("required_file_missing_or_linked", relative)
     sources = source_files(root)
     metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     package = metadata.get("project")

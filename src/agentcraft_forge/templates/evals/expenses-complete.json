@@ -190,6 +190,11 @@
             1
           ]
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses",
+        "summarize_expenses",
+        "set_budget"
       ]
     }
   ],

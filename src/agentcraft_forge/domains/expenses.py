@@ -524,6 +524,15 @@ def propose(message: str, reference_date: date | None = None) -> dict:
         "persisted": False,
         "model_invoked": False,
     }
+    if re.search(
+        r"\b(?:mil|millon(?:es)?|cada\s+(?:uno|una|unidad)|por\s+unidad)\b"
+        r"|\bc\s*/\s*u\b|\b\d+\s*[x×]\s*\$?\s*\d",
+        lower,
+    ):
+        return {
+            **unclear,
+            "reason": "Indique el importe total en pesos COP, con cifras, sin abreviaturas verbales ni precios por unidad.",
+        }
     words = re.findall(r"\w+", lower)
     summary_intent = any(
         get_close_matches(word, ["resumen"], n=1, cutoff=0.72) for word in words
@@ -591,6 +600,14 @@ def propose(message: str, reference_date: date | None = None) -> dict:
             if (value := amount(match.group())) is not None
         ]
         if not values:
+            if re.search(
+                r"\b(?:pon|poner|fija|fijar|establece|establecer|guarda|guardar|cambia|cambiar|actualiza|actualizar|asigna|asignar)\b",
+                lower,
+            ):
+                return {
+                    **unclear,
+                    "reason": "Indique el importe en cifras y el mes del presupuesto que desea guardar.",
+                }
             return {
                 "status": "proposal",
                 "persisted": False,

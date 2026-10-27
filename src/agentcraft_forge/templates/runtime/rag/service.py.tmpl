@@ -27,25 +27,15 @@ def retrieve(
     top_k: int,
     min_score: float,
 ) -> list[Document]:
-    candidates = store.max_marginal_relevance_search(
-        question, k=top_k, fetch_k=top_k * 4, filter=tenant_filter(tenant_id)
-    )
-    # MMR diversifica; la segunda consulta aporta un umbral de relevancia.
-    scored = store.similarity_search_with_score(
-        question,
-        k=top_k * 4,
+    # Una vectorización por pregunta; MMR filtra relevancia antes de diversificar.
+    vector = store.embeddings.embed_query(question)
+    return store.max_marginal_relevance_search_by_vector(
+        vector,
+        k=top_k,
+        fetch_k=top_k * 4,
         filter=tenant_filter(tenant_id),
         score_threshold=min_score,
     )
-    allowed = {
-        (d.metadata["source"], d.metadata["revision"], d.page_content)
-        for d, _ in scored
-    }
-    return [
-        d
-        for d in candidates
-        if (d.metadata["source"], d.metadata["revision"], d.page_content) in allowed
-    ]
 
 
 @operation("rag.answer")
@@ -56,10 +46,33 @@ def answer_question(
     tenant_id: str,
     top_k: int = 4,
     min_score: float = 0.2,
+    *,
+    retrieval_question: str | None = None,
+    max_evidence_chars: int = 4000,
 ) -> RagAnswer:
     if not question.strip() or len(question) > 16000:
         raise ValueError("La pregunta debe tener entre 1 y 16000 caracteres.")
-    documents = retrieve(store, question, tenant_id, top_k, min_score)
+    if type(max_evidence_chars) is not int or not 1 <= max_evidence_chars <= 16000:
+        raise ValueError(
+            "El límite de evidencia debe estar entre 1 y 16000 caracteres."
+        )
+    query = question if retrieval_question is None else retrieval_question
+    if not query.strip() or len(query) > 16000:
+        raise ValueError("La consulta de recuperación no es válida.")
+    candidates = retrieve(store, query, tenant_id, top_k, min_score)
+    documents = []
+    remaining = max_evidence_chars
+    for candidate in candidates:
+        # Nunca cortar una fuente en mitad de una condición o contradicción.
+        if len(candidate.page_content) <= remaining:
+            documents.append(candidate)
+            remaining -= len(candidate.page_content)
+        else:
+            return RagAnswer(
+                answer="La evidencia recuperada supera el límite de contexto; acote la pregunta o revise MAX_EVIDENCE_CHARS.",
+                citations=[],
+                abstained=True,
+            )
     if not documents:
         return RagAnswer(
             answer="No se encontró evidencia autorizada suficiente.",
@@ -82,7 +95,9 @@ def answer_question(
             ),
             HumanMessage(
                 json.dumps(
-                    {"question": question, "evidence": evidence}, ensure_ascii=False
+                    {"question": question, "evidence": evidence},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
             ),
         ],

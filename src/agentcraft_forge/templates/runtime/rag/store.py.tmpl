@@ -1,5 +1,7 @@
 """Qdrant local para pruebas o servidor para ejecución concurrente."""
 
+import hashlib
+import json
 import re
 
 from langchain_core.embeddings import Embeddings
@@ -8,6 +10,34 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from agent_app.settings import Settings
+
+CHUNKING = {"size": 800, "overlap": 120, "start_index": True}
+
+
+def embedding_identity(embeddings: Embeddings) -> dict:
+    """El proveedor declara modelo y opciones; las claves nunca forman parte de la identidad."""
+    model = getattr(embeddings, "model", None)
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("El proveedor de embeddings debe declarar un model estable.")
+    dimensions = getattr(embeddings, "dimensions", None)
+    if dimensions is not None and (type(dimensions) is not int or dimensions < 1):
+        raise ValueError("Las dimensiones de embeddings no son válidas.")
+    endpoint = getattr(embeddings, "openai_api_base", None)
+    configuration = json.dumps(
+        {
+            "endpoint": str(endpoint) if endpoint else None,
+            "options": getattr(embeddings, "model_kwargs", {}),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return {
+        "provider": type(embeddings).__module__ + "." + type(embeddings).__qualname__,
+        "model": model,
+        "requested_dimensions": dimensions,
+        "configuration_sha256": hashlib.sha256(configuration.encode()).hexdigest(),
+    }
 
 
 def open_client(settings: Settings) -> QdrantClient:
@@ -34,13 +64,29 @@ def tenant_filter(tenant_id: str) -> qm.Filter:
 def vector_store(
     client: QdrantClient, collection: str, embeddings: Embeddings
 ) -> QdrantVectorStore:
-    require_ready(client, collection)
+    manifest = require_ready(client, collection)
+    info = client.get_collection(collection)
+    vectors = info.config.params.vectors
+    if (
+        manifest.get("embedding") != embedding_identity(embeddings)
+        or manifest.get("chunking") != CHUNKING
+        or not isinstance(vectors, qm.VectorParams)
+        or vectors.size != manifest.get("dimensions")
+        or vectors.distance != qm.Distance.COSINE
+    ):
+        raise ValueError(
+            "Configuración de embeddings o ingestión incompatible. Conserve las fuentes "
+            "y vuelva a ingerir en otro QDRANT_COLLECTION; no se modificaron datos."
+        )
     return QdrantVectorStore(
-        client=client, collection_name=collection, embedding=embeddings
+        client=client,
+        collection_name=collection,
+        embedding=embeddings,
+        validate_collection_config=False,
     )
 
 
-def require_ready(client: QdrantClient, collection: str) -> None:
+def require_ready(client: QdrantClient, collection: str) -> dict:
     if not client.collection_exists(collection):
         raise ValueError(
             "La colección no existe. Ejecute agentcraft run --ingest primero."
@@ -51,10 +97,12 @@ def require_ready(client: QdrantClient, collection: str) -> None:
     if (
         not isinstance(manifest, dict)
         or type(manifest.get("version")) is not int
-        or manifest["version"] != 1
+        or manifest["version"] != 2
         or manifest.get("state") != "ready"
         or type(manifest.get("chunks")) is not int
         or manifest["chunks"] < 1
+        or type(manifest.get("dimensions")) is not int
+        or manifest["dimensions"] < 1
         or not isinstance(manifest.get("inventory_sha256"), str)
         or not re.fullmatch(r"[a-f0-9]{64}", manifest["inventory_sha256"])
         or client.count(collection, exact=True).count != manifest["chunks"]
@@ -63,3 +111,4 @@ def require_ready(client: QdrantClient, collection: str) -> None:
             "Colección incompleta o sin comprobante de carga. Conserve las fuentes y "
             "use otro QDRANT_COLLECTION para volver a ingerir; no se borraron datos."
         )
+    return manifest

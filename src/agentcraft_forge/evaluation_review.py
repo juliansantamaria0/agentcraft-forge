@@ -13,6 +13,7 @@ from agentcraft_forge.evaluation import (
     read_json_document,
     read_json_file,
 )
+from agentcraft_forge.evaluation_files import REPORT_JSON_BYTES, REVIEW_JSON_BYTES
 
 
 class ReviewItem(Strict):
@@ -31,7 +32,7 @@ class ReviewDocument(Strict):
 
 
 def prepare_review(report_path: Path) -> tuple[dict, ReviewDocument]:
-    report, content = read_json_document(report_path)
+    report, content = read_json_document(report_path, max_bytes=REPORT_JSON_BYTES)
     if report.get("mode") not in {"offline", "live"} or "metrics" not in report:
         raise ValueError("Solo se revisan informes ejecutados.")
     suite = Suite.model_validate(report["suite"])
@@ -69,7 +70,9 @@ def prepare_review(report_path: Path) -> tuple[dict, ReviewDocument]:
 
 def apply_review(report_path: Path, reviews_path: Path) -> dict:
     report, template = prepare_review(report_path)
-    document = ReviewDocument.model_validate(read_json_file(reviews_path))
+    document = ReviewDocument.model_validate(
+        read_json_file(reviews_path, max_bytes=REVIEW_JSON_BYTES)
+    )
     if document.report_sha256 != template.report_sha256:
         raise ValueError("La revisión corresponde a otro informe o el informe cambió.")
     expected = {(item.case_id, item.repetition): item for item in template.reviews}

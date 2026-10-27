@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.2 — En preparación
+
+- Evaluador RAG con cierre explícito de Qdrant y regresión completa con cliente real
+  y proveedor local, sin llamadas de pago.
+- Propuestas de gastos con cantidades por unidad o importes verbales piden aclaración;
+  un presupuesto de escritura sin importe no se convierte en consulta.
+- Colecciones RAG ligadas a modelo, proveedor, dimensiones y configuración de ingestión;
+  incompatibilidades y colecciones anteriores requieren reingestión explícita.
+- Una vectorización por pregunta RAG, sin sondas dimensionales al abrir; comparación
+  local reproducible frente a la secuencia de recuperación de 0.3.1.
+- Telemetría por mensaje del runtime, historial y evidencia acotados, reintentos
+  configurables desactivados por defecto; consumo del anfitrión explícitamente desconocido.
+- Suites tools coherentes con capacidades; selección por IDs/categorías y exclusiones
+  trazables. Informes reservados antes de ejecutar y publicación sin sobrescritura.
+- Errores de archivos requeridos con código y ruta seguros. Guía de contextos de uso,
+  límites de medición y pendientes de evaluación real.
+
 ## 0.3.1 — 2026-10-22
 
 - Graders tipados, igualdad JSON recursiva, variantes previstas y comprobaciones

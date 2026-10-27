@@ -138,9 +138,20 @@ def render(spec: AgentSpec) -> dict[str, str]:
         result["src/agent_app/evaluate.py"] = root.joinpath(
             "runtime", "evaluate.py.tmpl"
         ).read_text(encoding="utf-8")
-        result["evals/smoke.json"] = root.joinpath(
-            "evals", spec.plan.kind.value + ".json"
-        ).read_text(encoding="utf-8")
+        suite_data = json.loads(
+            root.joinpath("evals", spec.plan.kind.value + ".json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if spec.plan.kind == Kind.tools:
+            suite_data["cases"] = [
+                case
+                for case in suite_data["cases"]
+                if set(case.get("requires_capabilities", [])).issubset(spec.plan.tools)
+            ]
+        result["evals/smoke.json"] = (
+            json.dumps(suite_data, ensure_ascii=False, indent=2) + "\n"
+        )
     if (
         modern
         and spec.plan.kind == Kind.expenses

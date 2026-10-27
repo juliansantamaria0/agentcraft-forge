@@ -27,3 +27,14 @@ Criterios definidos antes de implementar esta ampliación:
 - El caso completo genera e instala un proyecto de gastos; usa procesos nuevos y solicitudes explícitas, y conserva comprobantes, estado final y una evaluación reproducible.
 - La demostración incluye reintento, conflicto, rechazo de lote inválido, anulación y lectura posterior al reinicio, con importes esperados calculados de forma independiente.
 - Las evaluaciones con modelos reales siguen pendientes por decisión del usuario.
+
+## Informes y selección de casos — 0.3.2
+
+- Los informes válidos pueden revisarse aunque superen 1 MB; suites y tarifas conservan su límite pequeño e independiente.
+- El destino de un informe se reserva de forma exclusiva antes de ejecutar un agente. Dos procesos no pueden empezar a facturar para el mismo destino.
+- Un destino no escribible se detecta antes de llamar modelos, y una evaluación fallida no deja un bloqueo abandonado.
+- El informe se publica completo; una interrupción no expone un JSON parcialmente escrito como si fuese el resultado final.
+- La selección por ID o categoría se valida antes de ejecutar y conserva los casos excluidos, sus motivos y la huella de la suite completa.
+- Los denominadores de las métricas corresponden a la selección efectiva; una evaluación parcial no se presenta como cobertura de toda la suite.
+- Los casos de herramientas declaran las capacidades que requieren. Los no aplicables se excluyen explícitamente y una selección incompatible no inicia llamadas.
+- Se prepara una demostración RAG con corpus sintético, embeddings y chat OpenAI reales. El usuario autorizó hasta US$1; no se ejecuta sin una clave local disponible ni se sustituye por una simulación presentada como real.

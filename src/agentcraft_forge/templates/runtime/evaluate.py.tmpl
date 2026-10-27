@@ -224,11 +224,18 @@ def execute(spec, payload, root, usage, state):
     for index, content in enumerate(case["documents"]):
         (documents / f"source-{index}.md").write_text(content, encoding="utf-8")
     embeddings = embeddings_with_usage(settings, usage, state)
-    with QdrantClient(location=":memory:") as client:
+    with contextlib.closing(QdrantClient(location=":memory:")) as client:
         ingest(client, "evaluation", embeddings, documents, "evaluation")
         store = vector_store(client, "evaluation", embeddings)
         return answer_question(
-            store, model, context, "evaluation", settings.top_k, settings.min_score
+            store,
+            model,
+            context,
+            "evaluation",
+            settings.top_k,
+            settings.min_score,
+            retrieval_question=case["message"],
+            max_evidence_chars=settings.max_evidence_chars,
         ).model_dump()
 
 

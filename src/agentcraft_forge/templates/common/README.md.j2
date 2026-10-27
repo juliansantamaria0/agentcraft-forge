@@ -43,6 +43,24 @@ No tiene navegación web, memoria persistente ni ejecución de código.
 solo contexto reciente en memoria del proceso y no hay memoria entre sesiones.
 `agentcraft run --dry-run` muestra el plan sin llamar a un modelo.
 
+## Contexto y consumo
+
+El propósito define el contexto de este proyecto; no añade herramientas fuera de
+sus capacidades. Las respuestas del runtime incluyen usage con llamadas y tokens
+observados por modelo. known=false indica telemetría incompleta. No incluye los
+tokens de Codex, Claude Code o Antigravity, ni una factura en dólares.
+
+Puede ajustar MAX_OUTPUT_TOKENS, HISTORY_TURNS, MAX_HISTORY_CHARS,
+MAX_EVIDENCE_CHARS y PROVIDER_RETRIES en el entorno. Los límites en caracteres
+no son límites exactos de tokens. Los reintentos están desactivados por defecto.
+Reducir contexto o salida requiere volver a evaluar la calidad del caso de uso.
+[% if kind == 'rag' %]
+Cada pregunta se vectoriza una vez. La colección registra identidad del modelo de
+embeddings y dimensiones; un cambio incompatible exige reingestión en otra colección.
+Una colección antigua sin este contrato también requiere reingestión. Si la evidencia
+no cabe en MAX_EVIDENCE_CHARS, el agente se abstiene; no corta fragmentos a mitad.
+[% endif %]
+
 ## Desarrollo
 
 ```console

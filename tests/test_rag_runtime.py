@@ -12,6 +12,8 @@ from qdrant_client import models as qm
 
 
 class EmbeddingsLocal(Embeddings):
+    model = "local-fixture-v1"
+
     def embed_documents(self, texts):
         return [self.embed_query(text) for text in texts]
 
@@ -132,3 +134,101 @@ def test_deleted_chunk_invalidates_a_ready_snapshot(rag):
     client.delete("changed", points_selector=qm.PointIdsList(points=[records[0].id]))
     with pytest.raises(ValueError, match="incompleta"):
         store.vector_store(client, "changed", embeddings)
+
+
+def test_embedding_model_change_with_same_dimensions_is_rejected_before_api(rag):
+    client, module, store, embeddings, corpus, _ = rag
+    module.ingest(client, "bound", embeddings, corpus, "a")
+    original = client.get_collection("bound").config.metadata
+    other = EmbeddingsLocal()
+    other.model = "local-fixture-v2"
+
+    def forbidden(text):
+        raise AssertionError("Una incompatibilidad debe detectarse sin vectorizar.")
+
+    other.embed_query = forbidden
+    with pytest.raises(ValueError, match="incompatible"):
+        store.vector_store(client, "bound", other)
+    assert client.get_collection("bound").config.metadata == original
+
+
+def test_open_and_retrieval_embed_only_the_actual_query_once(rag):
+    client, module, store, embeddings, corpus, target = rag
+    module.ingest(client, "economical", embeddings, corpus, "a")
+    calls = []
+
+    def count(text):
+        calls.append(text)
+        return [1.0, 0.0, 0.0, 0.0]
+
+    embeddings.embed_query = count
+    vectors = store.vector_store(client, "economical", embeddings)
+    import importlib
+
+    service = importlib.import_module("agent_app.rag.service")
+    result = service.retrieve(vectors, "pregunta concreta", "a", 4, 0.2)
+    assert len(result) == 2
+    assert calls == ["pregunta concreta"]
+    assert not service.retrieve(vectors, "pregunta concreta", "b", 4, 0.2)
+
+
+def test_rag_evaluation_worker_completes_with_real_qdrant_and_local_provider(
+    runtime_project, tmp_path, monkeypatch
+):
+    import json
+
+    from agentcraft_forge.evaluation import grade, load_suite
+
+    target, load = runtime_project("rag")
+    worker = load("evaluate")
+    service = load("rag.service")
+    suite = load_suite(target / "evals/smoke.json")
+    spec = json.loads((target / "agentcraft.json").read_text(encoding="utf-8"))
+
+    class LocalModel:
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, messages):
+            return service.RagAnswer(
+                answer="Los tickets de prioridad alta se atienden en cuatro horas.",
+                citations=["S1"],
+                abstained=False,
+            )
+
+    monkeypatch.setattr(worker, "model_with_usage", lambda *args: LocalModel())
+    monkeypatch.setattr(
+        worker, "embeddings_with_usage", lambda *args: EmbeddingsLocal()
+    )
+    case = next(c for c in suite.cases if c.category == "capability")
+    root = tmp_path / "case"
+    root.mkdir()
+    response = worker.execute(
+        spec,
+        {
+            "case": case.model_dump(),
+            "priced_models": ["gpt-4.1-mini", "text-embedding-3-small"],
+        },
+        root,
+        [],
+        {"known": True, "started": 0, "finished": 0},
+    )
+    assert response["sources"] == {"S1": "source-0.md"}
+    assert all(check["passed"] for check in grade(case, response))
+    assert not (target / ".data").exists()
+
+
+def test_evidence_budget_abstains_without_model_call(rag):
+    import importlib
+
+    client, module, store, embeddings, corpus, _ = rag
+    module.ingest(client, "bounded", embeddings, corpus, "a")
+    service = importlib.import_module("agent_app.rag.service")
+    result = service.answer_question(
+        store.vector_store(client, "bounded", embeddings),
+        object(),
+        "consulta",
+        "a",
+        max_evidence_chars=1,
+    )
+    assert result.abstained and result.citations == []

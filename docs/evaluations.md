@@ -13,7 +13,14 @@ agentcraft evaluate --project mi-agente
 Valida la suite y muestra casos, reglas, huellas y número de intentos. No ejecuta
 el agente, no abre proveedores y no genera resultados de calidad. Revise los
 casos para su propósito; una suite pequeña de ejemplo no cubre todo un despliegue.
-Si un plan tools selecciona solo una herramienta, adapte los casos a esa selección.
+Los proyectos tools nuevos incluyen solo casos compatibles con las herramientas
+seleccionadas. Al evaluar una suite previa, se excluyen automáticamente los casos
+que requieren capacidades ausentes y se conserva la selección y sus motivos en el
+informe. Revise los argumentos de ejemplo si cambia ciudades o repositorios.
+
+Use `--case ID` o `--category capability` (repetibles) para seleccionar casos. Un ID
+desconocido, duplicado, incompatible o una selección vacía se rechaza antes de
+ejecutar. Una selección parcial no certifica los casos excluidos ni todo el contexto.
 
 ## Ejecutar las plantillas deterministas
 
@@ -69,6 +76,16 @@ El presupuesto es un control entre intentos. Una petición en curso, reintentos 
 proveedor o la terminación por timeout pueden generar cargos por encima del límite.
 Si falta telemetría o una tarifa, se detiene la suite y el coste total queda
 desconocido. Use también los controles de gasto del proveedor.
+
+Antes de ejecutar se reserva el destino del informe con un bloqueo del sistema
+operativo y se comprueba la publicación sin sobrescritura. Un proceso terminado
+libera el bloqueo; el archivo .lock puede permanecer y no indica por sí solo una
+evaluación en curso. Una colisión tardía conserva el JSON completo en la ruta de
+recuperación indicada. Los informes admiten hasta 64 MB y las anotaciones 16 MB;
+las suites y tarifas conservan su límite de 1 MB.
+
+Consulte [consumo por mensaje](contexts-and-cost.md) para distinguir el runtime del
+asistente anfitrión y ajustar historial, evidencia, salida y reintentos.
 
 tools combina el modelo real con respuestas HTTP fijas: clima de 21 °C y viento
 de 5 km/h; repositorios con 123 estrellas. El informe declara fixed_http_fixtures.

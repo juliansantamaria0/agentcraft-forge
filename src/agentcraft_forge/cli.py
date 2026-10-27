@@ -15,13 +15,24 @@ from rich.table import Table
 from agentcraft_forge import __version__
 from agentcraft_forge.catalog import scope
 from agentcraft_forge.evaluation import Price, evaluate, load_suite, read_json_file
+from agentcraft_forge.evaluation_files import (
+    REVIEW_JSON_BYTES,
+    ReportLocked,
+    ReportPublicationError,
+    reserve_report,
+)
 from agentcraft_forge.evaluation_review import apply_review, prepare_review
 from agentcraft_forge.generator import generate
 from agentcraft_forge.integration import doctor as inspect_installation
 from agentcraft_forge.integration import inspect_project, install_skill
 from agentcraft_forge.planner import design
+from agentcraft_forge.project import (
+    ProjectValidationError,
+    ensure_built,
+    run_project,
+    run_request,
+)
 from agentcraft_forge.project import build as build_project
-from agentcraft_forge.project import ensure_built, run_project, run_request
 from agentcraft_forge.schema import Kind
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
@@ -168,6 +179,15 @@ def plan(
 def evaluate_command(
     project: Annotated[Path, typer.Option(exists=True, file_okay=False)] = Path("."),
     suite: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    case_ids: Annotated[
+        list[str] | None, typer.Option("--case", help="ID de caso; se puede repetir")
+    ] = None,
+    categories: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--category", help="capability, abstention o boundary; se puede repetir"
+        ),
+    ] = None,
     run_cases: Annotated[
         bool, typer.Option("--run", help="Ejecuta casos deterministas locales")
     ] = False,
@@ -192,11 +212,6 @@ def evaluate_command(
 ):
     """Prepara la evaluación por defecto; ejecutar requiere --run o --live."""
     try:
-        if report is not None:
-            if report.exists() or any(
-                p.is_symlink() for p in (report, *report.absolute().parents)
-            ):
-                raise ValueError("El informe ya existe o su destino está enlazado.")
         prices = (
             {
                 name: Price.model_validate(value)
@@ -205,24 +220,49 @@ def evaluate_command(
             if rates
             else {}
         )
-        result = evaluate(
-            project,
-            load_suite(suite or project / "evals/smoke.json"),
-            run=run_cases,
-            live=live,
-            rates=prices,
-            max_cost_usd=max_cost_usd,
-        )
-        serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
-        if report is not None:
-            report.parent.mkdir(parents=True, exist_ok=True)
-            with report.open("x", encoding="utf-8", newline="\n") as handle:
-                handle.write(serialized + "\n")
+        with reserve_report(report) as destination:
+            result = evaluate(
+                project,
+                load_suite(suite or project / "evals/smoke.json"),
+                run=run_cases,
+                live=live,
+                rates=prices,
+                max_cost_usd=max_cost_usd,
+                case_ids=case_ids,
+                categories=categories,
+            )
+            serialized = (
+                destination.publish(result)
+                if destination
+                else json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+            )
         typer.echo(serialized)
         if result["quality_gate"]["decision"] in {"failed", "incomplete"}:
             raise typer.Exit(2)
         if result["quality_gate"]["decision"] == "review_required":
             raise typer.Exit(3)
+    except ReportLocked:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": "report_locked",
+                    "message": "Otro proceso está generando este informe; use otro destino o espere a que termine.",
+                }
+            )
+        )
+        raise typer.Exit(1) from None
+    except ReportPublicationError as exc:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": "report_publication_failed",
+                    "recovery_report": str(exc.recovery_path),
+                }
+            )
+        )
+        raise typer.Exit(1) from None
     except (ValueError, OSError) as exc:
         typer.echo(
             json.dumps(
@@ -246,27 +286,34 @@ def review_evaluation_command(
 ):
     """Prepara una rúbrica vacía o aplica anotaciones humanas al informe exacto."""
     try:
-        if output is not None and (
-            output.exists()
-            or any(p.is_symlink() for p in (output, *output.absolute().parents))
-        ):
-            raise ValueError("El destino ya existe o está enlazado.")
-        result = (
-            apply_review(report, reviews)
-            if reviews
-            else prepare_review(report)[1].model_dump(mode="json")
-        )
-        serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
-        if output is not None:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            with output.open("x", encoding="utf-8", newline="\n") as handle:
-                handle.write(serialized + "\n")
+        with reserve_report(output, max_bytes=REVIEW_JSON_BYTES) as destination:
+            result = (
+                apply_review(report, reviews)
+                if reviews
+                else prepare_review(report)[1].model_dump(mode="json")
+            )
+            serialized = (
+                destination.publish(result)
+                if destination
+                else json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+            )
         typer.echo(serialized)
         decision = result.get("quality_gate", {}).get("decision")
         if decision in {"failed", "incomplete"}:
             raise typer.Exit(2)
         if decision == "review_required":
             raise typer.Exit(3)
+    except ReportPublicationError as exc:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": "report_publication_failed",
+                    "recovery_report": str(exc.recovery_path),
+                }
+            )
+        )
+        raise typer.Exit(1) from None
     except (ValueError, OSError, KeyError, TypeError):
         typer.echo(
             json.dumps(
@@ -291,6 +338,19 @@ def build(
     try:
         report = build_project(project, install=install)
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    except ProjectValidationError as exc:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "error",
+                    "code": exc.code,
+                    "path": exc.relative_path,
+                    "message": "Restaure el archivo requerido como archivo local y vuelva a ejecutar agentcraft build.",
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise typer.Exit(1) from None
     except Exception as exc:
         console.print(
             f"Build falló ({type(exc).__name__}). Revise el proyecto y sus dependencias.",

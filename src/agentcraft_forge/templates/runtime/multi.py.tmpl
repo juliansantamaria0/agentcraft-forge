@@ -85,7 +85,7 @@ def run_multi(
         model=settings.crew_model,
         api_key=settings.require_key(),
         timeout=settings.timeout,
-        max_retries=1,
+        max_retries=settings.provider_retries,
         max_tokens=settings.max_output_tokens,
     )
     with operation("model.team"):

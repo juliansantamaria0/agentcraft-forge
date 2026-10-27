@@ -2,6 +2,11 @@
 
 De una idea a un proyecto de agente con capacidades explícitas, código y pruebas.
 
+Puede utilizarse en contextos empresariales, formativos, técnicos o personales.
+El agente concreto se define por sus datos, herramientas y criterios de aceptación.
+El ejemplo de gastos muestra persistencia; consulte los [contextos de uso y el
+control de consumo por mensaje](docs/contexts-and-cost.md) para elegir una base.
+
 ## Una demostración en un minuto
 
 Con Python 3.12, instale desde el checkout:

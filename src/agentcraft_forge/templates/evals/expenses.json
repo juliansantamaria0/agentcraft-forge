@@ -26,6 +26,9 @@
           "op": "equals",
           "value": false
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses"
       ]
     },
     {
@@ -43,6 +46,9 @@
           "op": "equals",
           "value": false
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses"
       ]
     },
     {
@@ -55,6 +61,9 @@
           "op": "equals",
           "value": "2026-10-20"
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses"
       ]
     },
     {
@@ -114,6 +123,11 @@
           "action": "summary",
           "month": "2026-10"
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses",
+        "summarize_expenses",
+        "set_budget"
       ]
     },
     {
@@ -159,6 +173,11 @@
           "op": "equals",
           "value": 0
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses",
+        "summarize_expenses",
+        "set_budget"
       ]
     },
     {
@@ -219,6 +238,11 @@
           "op": "equals",
           "value": 1
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses",
+        "summarize_expenses",
+        "set_budget"
       ]
     },
     {
@@ -284,6 +308,11 @@
           "op": "equals",
           "value": 1
         }
+      ],
+      "requires_capabilities": [
+        "record_expenses",
+        "summarize_expenses",
+        "set_budget"
       ]
     }
   ],

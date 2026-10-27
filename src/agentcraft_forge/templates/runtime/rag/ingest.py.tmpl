@@ -11,6 +11,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
+from agent_app.rag.store import CHUNKING, embedding_identity
+
 MAX_FILE_BYTES = 1_000_000
 MAX_CORPUS_BYTES = 10_000_000
 
@@ -56,8 +58,11 @@ def ingest(
         raise ValueError(
             "La colección ya existe: use otro QDRANT_COLLECTION para un snapshot nuevo."
         )
+    identity = embedding_identity(embeddings)
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800, chunk_overlap=120, add_start_index=True
+        chunk_size=CHUNKING["size"],
+        chunk_overlap=CHUNKING["overlap"],
+        add_start_index=CHUNKING["start_index"],
     )
     chunks = splitter.split_documents(load_documents(directory, tenant_id))
     ids = [
@@ -73,19 +78,27 @@ def ingest(
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("El inventario de fragmentos no es válido.")
     manifest = {
-        "version": 1,
+        "version": 2,
         "state": "loading",
         "chunks": len(chunks),
         "inventory_sha256": hashlib.sha256("\n".join(ids).encode()).hexdigest(),
+        "embedding": identity,
+        "chunking": CHUNKING,
     }
     dimensions = len(embeddings.embed_query("dimension probe"))
+    if not dimensions or identity["requested_dimensions"] not in (None, dimensions):
+        raise ValueError("El proveedor no devolvió las dimensiones configuradas.")
+    manifest["dimensions"] = dimensions
     client.create_collection(
         collection_name=collection,
         vectors_config=qm.VectorParams(size=dimensions, distance=qm.Distance.COSINE),
         metadata={"agentcraft": manifest},
     )
     store = QdrantVectorStore(
-        client=client, collection_name=collection, embedding=embeddings
+        client=client,
+        collection_name=collection,
+        embedding=embeddings,
+        validate_collection_config=False,
     )
     store.add_documents(chunks, ids=ids)
     if client.count(collection, exact=True).count != len(chunks):

@@ -368,3 +368,39 @@ def test_readonly_uri_preserves_spaces_unicode_and_uri_metacharacters(tmp_path):
         handle(root, {"action": "receipt", "operation_id": "message-0001"})["persisted"]
         is True
     )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Compré 2 almuerzos de $15000 cada uno hoy",
+        "Compré 3 pasajes a $4500 cada uno hoy",
+        "Compré 3 pasajes a $4500 por unidad hoy",
+        "Compré 3 pasajes a $4500 c/u hoy",
+        "Gasté 2 x 15000 en almuerzos hoy",
+        "Pon mi presupuesto en 2 millones este mes",
+        "Gasté 15 mil en almuerzo hoy",
+        "Guarda mi presupuesto este mes",
+    ],
+)
+def test_unit_prices_and_verbal_amounts_require_clarification(message):
+    result = propose(message, TODAY)
+    assert result["status"] == "needs_clarification"
+    assert result["persisted"] is False
+    assert result["model_invoked"] is False
+    assert "request" not in result
+
+
+def test_explicit_total_and_budget_query_remain_supported():
+    assert (
+        propose("Gasté 15k en almuerzo hoy", TODAY)["request"]["expenses"][0]["amount"]
+        == 15000
+    )
+    assert (
+        propose("Pon mi presupuesto en $2000000 este mes", TODAY)["request"]["amount"]
+        == 2000000
+    )
+    assert (
+        propose("Consulta mi presupuesto este mes", TODAY)["request"]["action"]
+        == "summary"
+    )

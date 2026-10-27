@@ -10,6 +10,103 @@ from uuid import uuid4
 
 LOGGER = logging.getLogger("agent_app")
 RUN_ID = ContextVar("agentcraft_run_id", default=None)
+USAGE = ContextVar("agentcraft_usage", default=None)
+
+
+def record_usage(model, input_tokens, output_tokens):
+    meter = USAGE.get()
+    if meter is None:
+        return
+    if (
+        not isinstance(model, str)
+        or not model
+        or type(input_tokens) is not int
+        or input_tokens < 0
+        or type(output_tokens) is not int
+        or output_tokens < 0
+    ):
+        meter["known"] = False
+        return
+    totals = meter["by_model"].setdefault(
+        model, {"input_tokens": 0, "output_tokens": 0}
+    )
+    totals["input_tokens"] += input_tokens
+    totals["output_tokens"] += output_tokens
+
+
+def usage_callback(model):
+    from langchain_core.callbacks import BaseCallbackHandler
+
+    class Meter(BaseCallbackHandler):
+        def on_chat_model_start(self, serialized, messages, **kwargs):
+            meter = USAGE.get()
+            if meter is not None:
+                meter["chat_calls"] += 1
+
+        def on_llm_end(self, response, **kwargs):
+            meter = USAGE.get()
+            if meter is None:
+                return
+            meter["chat_finished"] += 1
+            try:
+                value = response.generations[0][0].message.usage_metadata
+                record_usage(model, value["input_tokens"], value["output_tokens"])
+            except (AttributeError, KeyError, IndexError, TypeError):
+                meter["known"] = False
+
+        def on_llm_error(self, error, **kwargs):
+            meter = USAGE.get()
+            if meter is not None:
+                meter["known"] = False
+
+    return Meter()
+
+
+def metered_embeddings_client(delegate, model):
+    class Client:
+        def create(self, *args, **kwargs):
+            meter = USAGE.get()
+            if meter is not None:
+                meter["embedding_calls"] += 1
+            try:
+                response = delegate.create(*args, **kwargs)
+                data = response if isinstance(response, dict) else response.model_dump()
+                record_usage(model, data.get("usage", {}).get("total_tokens"), 0)
+                return response
+            except Exception:
+                if meter is not None:
+                    meter["known"] = False
+                raise
+
+    return Client()
+
+
+@contextmanager
+def usage_scope():
+    meter = {
+        "known": True,
+        "chat_calls": 0,
+        "chat_finished": 0,
+        "embedding_calls": 0,
+        "by_model": {},
+    }
+    token = USAGE.set(meter)
+    try:
+        yield meter
+    finally:
+        USAGE.reset(token)
+
+
+def usage_report(meter):
+    return {
+        "scope": "generated_runtime_only",
+        "known": meter["known"] and meter["chat_calls"] == meter["chat_finished"],
+        "chat_calls": meter["chat_calls"],
+        "embedding_calls": meter["embedding_calls"],
+        "by_model": meter["by_model"],
+        "host_assistant_tokens": None,
+        "cost_usd": None,
+    }
 
 
 def configure_logging() -> None:
@@ -22,7 +119,13 @@ def configure_logging() -> None:
 
 def invoke_model(model, messages):
     with operation("model.invoke"):
-        return model.invoke(messages)
+        meter = USAGE.get()
+        before = meter["chat_calls"] if meter else 0
+        try:
+            return model.invoke(messages)
+        finally:
+            if meter is not None and before == meter["chat_calls"]:
+                meter["known"] = False
 
 
 @contextmanager

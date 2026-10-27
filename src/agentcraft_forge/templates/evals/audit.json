@@ -21,7 +21,8 @@
           "op": "equals",
           "value": false
         }
-      ]
+      ],
+      "requires_capabilities": []
     },
     {
       "id": "missing-sources",
@@ -45,6 +46,9 @@
           "owner": "Lucía",
           "reference_date": "2026-10-22"
         }
+      ],
+      "requires_capabilities": [
+        "scan_commitments"
       ]
     },
     {
@@ -78,6 +82,9 @@
           "owner": "Lucía",
           "reference_date": "2026-10-22"
         }
+      ],
+      "requires_capabilities": [
+        "scan_commitments"
       ]
     },
     {
@@ -101,6 +108,9 @@
           "owner": "Lucía",
           "reference_date": "2026-10-22"
         }
+      ],
+      "requires_capabilities": [
+        "scan_commitments"
       ]
     },
     {
@@ -146,6 +156,10 @@
           "op": "equals",
           "value": 1
         }
+      ],
+      "requires_capabilities": [
+        "scan_commitments",
+        "apply_reviewed_commitments"
       ]
     }
   ],

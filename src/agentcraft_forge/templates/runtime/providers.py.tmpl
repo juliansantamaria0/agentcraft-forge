@@ -2,6 +2,7 @@
 
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+from agent_app.observability import metered_embeddings_client, usage_callback
 from agent_app.settings import Settings
 
 
@@ -10,15 +11,21 @@ def chat_model(settings: Settings) -> ChatOpenAI:
         model=settings.chat_model,
         api_key=settings.require_key(),
         timeout=settings.timeout,
-        max_retries=1,
+        max_retries=settings.provider_retries,
         max_tokens=settings.max_output_tokens,
+        callbacks=[usage_callback(settings.chat_model)],
     )
 
 
 def embeddings_model(settings: Settings) -> OpenAIEmbeddings:
-    return OpenAIEmbeddings(
+    embeddings = OpenAIEmbeddings(
         model=settings.embedding_model,
         api_key=settings.require_key(),
         request_timeout=settings.timeout,
-        max_retries=1,
+        max_retries=settings.provider_retries,
+        dimensions=settings.embedding_dimensions,
     )
+    embeddings.client = metered_embeddings_client(
+        embeddings.client, settings.embedding_model
+    )
+    return embeddings

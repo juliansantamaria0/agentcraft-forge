@@ -1,5 +1,9 @@
 # AgentCraft Forge: implementación de un meta-agente distribuible
 
+> Instantánea histórica de 0.3.1. Para instalar y operar la versión del checkout,
+> use README.md y docs/. El código y los comandos reproducidos más abajo pueden
+> corresponder a versiones anteriores. Este manual no se carga como contexto por mensaje.
+
 **Guía técnica y código completo · Versión 0.3.1 · 22 de octubre de 2026**
 
 El entregable contiene una CLI funcional, recursos internos y cinco arquitecturas generables. Esta guía extrae el código de los archivos del proyecto probado: los bloques pueden copiarse conservando las rutas indicadas. El ZIP reúne el repositorio; el wheel permite instalar la CLI sin un checkout.

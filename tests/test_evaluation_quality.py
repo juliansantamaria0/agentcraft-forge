@@ -318,7 +318,7 @@ def test_review_hash_uses_the_same_bytes_that_were_parsed(tmp_path, monkeypatch)
     report, result = human_report(tmp_path)
     original = report.read_bytes()
 
-    def captured(_):
+    def captured(_, **kwargs):
         report.write_text("changed-after-read", encoding="utf-8")
         return result, original
 
@@ -344,3 +344,91 @@ def test_review_criteria_cannot_be_blank_and_large_integers_are_finite():
         checks=[Check(path="value", op="max_value", value=10**1000)],
     )
     assert grade(case, {"value": 10**999})[0]["passed"]
+
+
+def test_selection_filters_capabilities_and_explicit_incompatible_id_fails(
+    runtime_project,
+):
+    from agentcraft_forge.evaluation import select_cases
+
+    target, _ = runtime_project("tools")
+    suite = load_suite(target / "evals/smoke.json")
+    selected, metadata = select_cases(
+        suite, ["current_weather"], categories=["capability"]
+    )
+    assert [c.id for c in selected.cases] == ["weather"]
+    assert not metadata["is_full_suite"]
+    assert any(c["case_id"] == "repository" for c in metadata["excluded_cases"])
+    with pytest.raises(ValueError, match="no seleccionadas"):
+        select_cases(suite, ["current_weather"], case_ids=["repository"])
+    with pytest.raises(ValueError, match="desconocidos"):
+        select_cases(suite, ["current_weather"], case_ids=["typo"])
+
+
+def test_new_suite_contains_only_selected_tools(tmp_path):
+    spec = design("weather-only", "Consulta meteorológica limitada", Kind.tools)
+    spec = spec.model_copy(
+        update={"plan": spec.plan.model_copy(update={"tools": ["current_weather"]})}
+    )
+    root = generate(spec, tmp_path)
+    suite = load_suite(root / "evals/smoke.json")
+    assert {c.id for c in suite.cases} == {"weather", "unsupported-city", "no-write"}
+    assert all(
+        set(c.requires_capabilities).issubset(spec.plan.tools) for c in suite.cases
+    )
+
+
+def test_report_reservation_prevents_concurrent_process_and_releases(tmp_path):
+    import subprocess
+    import sys
+
+    from agentcraft_forge.evaluation_files import reserve_report
+
+    path = tmp_path / "report.json"
+    script = (
+        "import sys; from pathlib import Path; "
+        "from agentcraft_forge.evaluation_files import ReportLocked, reserve_report\n"
+        "try:\n with reserve_report(Path(sys.argv[1])): pass\n"
+        "except ReportLocked:\n print('locked')\n"
+    )
+    with reserve_report(path):
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert result.stdout.strip() == "locked"
+        assert not path.exists()
+    with reserve_report(path) as output:
+        output.publish({"complete": True})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"complete": True}
+
+
+def test_late_publication_collision_preserves_full_result_and_existing_destination(
+    tmp_path,
+):
+    from agentcraft_forge.evaluation_files import ReportPublicationError, reserve_report
+
+    path = tmp_path / "report.json"
+    with pytest.raises(ReportPublicationError) as error:
+        with reserve_report(path) as output:
+            path.write_text("preserve-existing", encoding="utf-8")
+            output.publish({"complete": True})
+    assert path.read_text(encoding="utf-8") == "preserve-existing"
+    assert json.loads(error.value.recovery_path.read_text(encoding="utf-8")) == {
+        "complete": True
+    }
+
+
+def test_report_reader_accepts_large_reports_but_keeps_input_limit(tmp_path):
+    from agentcraft_forge.evaluation import read_json_document
+    from agentcraft_forge.evaluation_files import REPORT_JSON_BYTES
+
+    path = tmp_path / "large.json"
+    path.write_text(json.dumps({"padding": "x" * 1_100_000}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_json_document(path)
+    data, original = read_json_document(path, max_bytes=REPORT_JSON_BYTES)
+    assert len(data["padding"]) == 1_100_000 and len(original) > 1_000_000

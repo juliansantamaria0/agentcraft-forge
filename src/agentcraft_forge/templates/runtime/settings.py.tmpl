@@ -13,6 +13,7 @@ class Settings(BaseModel):
     api_key: SecretStr = SecretStr("")
     chat_model: str = "gpt-4.1-mini"
     embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int | None = Field(default=None, ge=1, le=65536)
     crew_model: str = "openai/gpt-4.1-mini"
     tenant_id: str = Field(default="demo", min_length=1, max_length=100)
     collection: str = Field(default="knowledge_demo_v1", pattern=r"^[a-zA-Z0-9_-]+$")
@@ -25,6 +26,10 @@ class Settings(BaseModel):
     max_steps: int = Field(default=12, ge=2, le=60)
     timeout: float = Field(default=30, gt=0, le=120)
     max_output_tokens: int = Field(default=1200, ge=1, le=8000)
+    provider_retries: int = Field(default=0, ge=0, le=2)
+    history_turns: int = Field(default=1, ge=0, le=2)
+    max_history_chars: int = Field(default=1200, ge=0, le=4000)
+    max_evidence_chars: int = Field(default=4000, ge=1, le=16000)
 
     def require_key(self) -> str:
         value = self.api_key.get_secret_value()
@@ -40,6 +45,11 @@ def load_settings(env_file: Path | None = Path(".env")) -> Settings:
         api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
         chat_model=os.getenv("CHAT_MODEL", "gpt-4.1-mini"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_dimensions=(
+            int(os.environ["EMBEDDING_DIMENSIONS"])
+            if os.getenv("EMBEDDING_DIMENSIONS")
+            else None
+        ),
         crew_model=os.getenv("CREW_MODEL", "openai/gpt-4.1-mini"),
         tenant_id=os.getenv("TENANT_ID", "demo"),
         collection=os.getenv("QDRANT_COLLECTION", "knowledge_demo_v1"),
@@ -52,4 +62,8 @@ def load_settings(env_file: Path | None = Path(".env")) -> Settings:
         max_steps=int(os.getenv("MAX_STEPS", "12")),
         timeout=float(os.getenv("REQUEST_TIMEOUT", "30")),
         max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "1200")),
+        provider_retries=int(os.getenv("PROVIDER_RETRIES", "0")),
+        history_turns=int(os.getenv("HISTORY_TURNS", "1")),
+        max_history_chars=int(os.getenv("MAX_HISTORY_CHARS", "1200")),
+        max_evidence_chars=int(os.getenv("MAX_EVIDENCE_CHARS", "4000")),
     )

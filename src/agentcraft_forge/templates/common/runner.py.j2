@@ -8,7 +8,18 @@ from contextlib import closing
 [% endif %]
 from pathlib import Path
 
-from agent_app.observability import configure_logging, operation
+from agent_app.observability import (
+[% if kind == 'multi' %]
+    USAGE,
+[% endif %]
+    configure_logging,
+    operation,
+[% if kind == 'multi' %]
+    record_usage,
+[% endif %]
+    usage_report,
+    usage_scope,
+)
 
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -35,14 +46,16 @@ def _run(argv=None):
     history = []
 
     def request(question):
-        with operation("agent.query"):
-            return _request(question)
+        with operation("agent.query"), usage_scope() as meter:
+            answer = _request(question)
+            return {**answer, "usage": usage_report(meter)}
 
     def _request(question):
         if not question.strip() or len(question) > 4000:
             raise ValueError("La consulta debe tener entre 1 y 4000 caracteres.")
-        context = json.dumps({"purpose": spec["purpose"], "history": history[-2:],
-                              "question": question}, ensure_ascii=False)
+        selected_history = history[-settings.history_turns:] if settings.history_turns else []
+        context = json.dumps({"purpose": spec["purpose"], "history": selected_history,
+                              "question": question}, ensure_ascii=False, separators=(",", ":"))
         if len(context) > 16000:
             raise ValueError("Contexto demasiado largo; comience una sesión nueva.")
 [% if kind == 'rag' %]
@@ -53,7 +66,9 @@ def _run(argv=None):
         with closing(open_client(settings)) as client:
             store = vector_store(client, settings.collection, embeddings_model(settings))
             result = answer_question(store, chat_model(settings), context,
-                                     settings.tenant_id, settings.top_k, settings.min_score)
+                                     settings.tenant_id, settings.top_k, settings.min_score,
+                                     retrieval_question=question,
+                                     max_evidence_chars=settings.max_evidence_chars)
         answer = result.model_dump()
 [% elif kind == 'tools' %]
         import httpx
@@ -71,12 +86,21 @@ def _run(argv=None):
 [% else %]
         from agent_app.multi import run_multi
 
-        answer = run_multi(settings, context).model_dump()
+        metrics = {}
+        answer = run_multi(settings, context, usage=metrics).model_dump()
+        meter = USAGE.get()
+        requests = metrics.get("successful_requests", 0)
+        if type(requests) is int and requests > 0:
+            meter["chat_calls"] += requests
+            meter["chat_finished"] += requests
+            record_usage(settings.crew_model, metrics.get("prompt_tokens"), metrics.get("completion_tokens"))
+        else:
+            meter["known"] = False
 [% endif %]
         # Memoria efímera acotada: un resumen textual, nunca permisos o credenciales.
-        history.append({"question": question[:1000],
-                        "answer_excerpt": json.dumps(answer, ensure_ascii=False)[:1000]})
-        del history[:-2]
+        history.append({"question": question[:settings.max_history_chars // 2],
+                        "answer_excerpt": json.dumps(answer, ensure_ascii=False, separators=(",", ":"))[:settings.max_history_chars // 2]})
+        del history[:max(0, len(history) - settings.history_turns)]
         return answer
 
     with operation("agent.session"):
@@ -86,10 +110,11 @@ def _run(argv=None):
             from agent_app.rag.ingest import ingest
             from agent_app.rag.store import open_client
 
-            with operation("rag.ingest"), closing(open_client(settings)) as client:
+            with usage_scope() as meter, operation("rag.ingest"), closing(open_client(settings)) as client:
                 count = ingest(client, settings.collection, embeddings_model(settings),
                                args.ingest, settings.tenant_id)
-            print(json.dumps({"collection": settings.collection, "chunks": count}))
+            print(json.dumps({"collection": settings.collection, "chunks": count,
+                              "usage": usage_report(meter)}))
             return 0
 [% else %]
             raise ValueError("--ingest solo está disponible para RAG.")
