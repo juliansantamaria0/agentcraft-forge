@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.3.2 — En preparación
+## 0.3.3 — En preparación
+
+- Recuperación RAG con referencia acotada a la pregunta anterior para seguimientos
+  simples; ambigüedad y anclas incompletas solicitan aclaración sin llamadas al proveedor.
+- Casos de varios turnos en una colección sintética por intento, resultados y uso
+  observado por turno; siete casos preparados para evaluación real, todavía pendiente.
+- Regresiones sobre Qdrant real para seguimientos, cambios de tema, historial
+  desactivado o truncado, aislamiento entre casos y operación interactiva.
+- Prueba de constructores de proveedor aislada de proxies del proceso, sin cambiar
+  la configuración de red de los runtimes.
+- VALIDATION.md incorpora el commit y la CI verificada de 0.3.2 y actualiza reproducción.
+
+## 0.3.2 — 2026-10-27
 
 - Evaluador RAG con cierre explícito de Qdrant y regresión completa con cliente real
   y proveedor local, sin llamadas de pago.

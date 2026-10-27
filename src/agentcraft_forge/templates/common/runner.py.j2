@@ -60,16 +60,13 @@ def _run(argv=None):
             raise ValueError("Contexto demasiado largo; comience una sesión nueva.")
 [% if kind == 'rag' %]
         from agent_app.providers import embeddings_model
-        from agent_app.rag.service import answer_question
+        from agent_app.rag.service import answer_turn
         from agent_app.rag.store import open_client, vector_store
 
         with closing(open_client(settings)) as client:
             store = vector_store(client, settings.collection, embeddings_model(settings))
-            result = answer_question(store, chat_model(settings), context,
-                                     settings.tenant_id, settings.top_k, settings.min_score,
-                                     retrieval_question=question,
-                                     max_evidence_chars=settings.max_evidence_chars)
-        answer = result.model_dump()
+            answer = answer_turn(store, chat_model(settings), question, history,
+                                 spec["purpose"], settings)
 [% elif kind == 'tools' %]
         import httpx
 
@@ -97,10 +94,12 @@ def _run(argv=None):
         else:
             meter["known"] = False
 [% endif %]
+[% if kind != 'rag' %]
         # Memoria efímera acotada: un resumen textual, nunca permisos o credenciales.
         history.append({"question": question[:settings.max_history_chars // 2],
                         "answer_excerpt": json.dumps(answer, ensure_ascii=False, separators=(",", ":"))[:settings.max_history_chars // 2]})
         del history[:max(0, len(history) - settings.history_turns)]
+[% endif %]
         return answer
 
     with operation("agent.session"):

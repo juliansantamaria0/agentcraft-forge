@@ -70,6 +70,9 @@ class Case(Strict):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     category: Literal["capability", "abstention", "boundary"]
     message: str = Field(min_length=1, max_length=4000)
+    turns: list[Annotated[str, Field(min_length=1, max_length=4000)]] = Field(
+        default_factory=list, max_length=6
+    )
     checks: list[Check] = Field(min_length=1, max_length=30)
     human_review: bool = False
     requires_capabilities: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")]] = (
@@ -87,6 +90,10 @@ class Case(Strict):
 
     @model_validator(mode="after")
     def bounded_fixtures(self):
+        if self.turns and self.turns[0] != self.message:
+            raise ValueError("El primer turno debe coincidir con message.")
+        if any(not turn.strip() for turn in self.turns):
+            raise ValueError("Los turnos deben contener texto.")
         if any(
             not step.isdigit()
             or str(int(step)) != step
@@ -156,6 +163,8 @@ class Suite(Strict):
             raise ValueError("Cada caso RAG requiere un corpus sintético explícito.")
         if self.kind != Kind.rag and any(case.documents for case in self.cases):
             raise ValueError("Los documentos de evaluación son solo para RAG.")
+        if self.kind != Kind.rag and any(case.turns for case in self.cases):
+            raise ValueError("Los turnos de evaluación son solo para RAG.")
         return self
 
 
@@ -546,6 +555,13 @@ def evaluate(
     suite, selection = select_cases(
         suite, spec.plan.tools, case_ids=case_ids, categories=categories
     )
+    if any(case.turns for case in suite.cases) and (
+        spec.generator_version is None
+        or tuple(map(int, spec.generator_version.split("."))) < (0, 3, 3)
+    ):
+        raise ValueError(
+            "Los casos de conversación requieren un proyecto generado con 0.3.3 o posterior."
+        )
     model_required = not TEMPLATES[suite.kind].domain
     planned = len(suite.cases) * suite.repetitions
     report = {

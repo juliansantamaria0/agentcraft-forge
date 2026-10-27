@@ -1,6 +1,8 @@
 """RAG determinista: recuperación MMR y generación acotada con citas válidas."""
 
 import json
+import re
+import unicodedata
 
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -18,6 +20,92 @@ class RagAnswer(BaseModel):
     citations: list[str] = Field(max_length=20)
     abstained: bool
     sources: dict[str, str] = Field(default_factory=dict)
+
+
+def _normalized(value: str) -> str:
+    return "".join(
+        c
+        for c in unicodedata.normalize("NFD", value.lower())
+        if not unicodedata.combining(c)
+    ).strip(" ¿?¡!")
+
+
+def _followup(question: str) -> bool:
+    return bool(
+        re.search(
+            r"^y\b|\b(?:eso|esto|aquello|lo anterior|ese plazo|esa solicitud)\b"
+            r"|\b(?:se supera|se incumple)$",
+            _normalized(question),
+        )
+    )
+
+
+def resolve_retrieval_query(
+    question: str, history: list[dict]
+) -> tuple[str | None, str]:
+    """Referencia simple de un turno; no infiere sujetos ni usa respuestas como evidencia."""
+    normalized = _normalized(question)
+    if not _followup(question):
+        return question, "standalone"
+    if not history or normalized in {"y eso", "eso", "y", "y que", "que pasa"}:
+        return None, "clarification_required"
+    previous = history[-1]
+    anchor = previous.get("question", "")
+    if (
+        not anchor
+        or not previous.get("question_complete", True)
+        or _followup(anchor)
+        or re.search(r"\b(?:y|o)\b", _normalized(anchor))
+        or anchor.count("?") > 1
+    ):
+        return None, "clarification_required"
+    return f"Pregunta anterior: {anchor}\nSeguimiento: {question}", "previous_question"
+
+
+def answer_turn(
+    store, model, question: str, history: list[dict], purpose: str, settings
+) -> dict:
+    if not question.strip() or len(question) > 4000:
+        raise ValueError("La consulta debe tener entre 1 y 4000 caracteres.")
+    selected = history[-settings.history_turns :] if settings.history_turns else []
+    query, mode = resolve_retrieval_query(question, selected)
+    if query is None:
+        result = RagAnswer(
+            answer="Indique explícitamente a qué solicitud, plazo o tema se refiere para consultar las fuentes.",
+            citations=[],
+            abstained=True,
+        )
+    else:
+        context = json.dumps(
+            {"purpose": purpose, "history": selected, "question": question},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(context) > 16000:
+            raise ValueError("Contexto demasiado largo; comience una sesión nueva.")
+        result = answer_question(
+            store,
+            model,
+            context,
+            settings.tenant_id,
+            settings.top_k,
+            settings.min_score,
+            retrieval_question=query,
+            max_evidence_chars=settings.max_evidence_chars,
+        )
+    answer = {**result.model_dump(), "retrieval_mode": mode}
+    limit = settings.max_history_chars // 2
+    history.append(
+        {
+            "question": question[:limit],
+            "question_complete": len(question) <= limit,
+            "answer_excerpt": json.dumps(
+                answer, ensure_ascii=False, separators=(",", ":")
+            )[:limit],
+        }
+    )
+    del history[: max(0, len(history) - settings.history_turns)]
+    return answer
 
 
 def retrieve(

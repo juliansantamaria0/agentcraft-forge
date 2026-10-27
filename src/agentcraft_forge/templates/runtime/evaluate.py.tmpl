@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -216,7 +217,7 @@ def execute(spec, payload, root, usage, state):
     from qdrant_client import QdrantClient
 
     from agent_app.rag.ingest import ingest
-    from agent_app.rag.service import answer_question
+    from agent_app.rag.service import answer_turn
     from agent_app.rag.store import vector_store
 
     documents = root / "corpus"
@@ -227,16 +228,23 @@ def execute(spec, payload, root, usage, state):
     with contextlib.closing(QdrantClient(location=":memory:")) as client:
         ingest(client, "evaluation", embeddings, documents, "evaluation")
         store = vector_store(client, "evaluation", embeddings)
-        return answer_question(
-            store,
-            model,
-            context,
-            "evaluation",
-            settings.top_k,
-            settings.min_score,
-            retrieval_question=case["message"],
-            max_evidence_chars=settings.max_evidence_chars,
-        ).model_dump()
+        history = []
+        turns = []
+        settings = settings.model_copy(update={"tenant_id": "evaluation"})
+        for message in case.get("turns") or [case["message"]]:
+            usage_start = len(usage)
+            started = time.monotonic()
+            response = answer_turn(
+                store, model, message, history, spec["purpose"], settings
+            )
+            turns.append(
+                {
+                    **response,
+                    "observed_usage": usage[usage_start:],
+                    "elapsed_seconds": round(time.monotonic() - started, 6),
+                }
+            )
+        return {**turns[-1], "turn_results": turns} if case.get("turns") else turns[-1]
 
 
 def main():

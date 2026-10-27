@@ -105,6 +105,13 @@ declaradas; exists diferencia un campo ausente de uno presente con null. Se vali
 los operandos antes de ejecutar: por ejemplo, min_length exige un entero no negativo.
 
 - documents contiene textos sintéticos para RAG.
+- turns permite entre uno y seis mensajes consecutivos en casos RAG de proyectos
+  generados con 0.3.3 o posterior. El primer turno coincide con message. El corpus se
+  ingiere una vez por intento y el historial se comparte solo dentro de ese caso;
+  turn_results conserva respuestas, rutas de recuperación, uso observado y tiempo
+  de cada turno. Los checks pueden usar turn_results.1.answer. El coste total del
+  intento incluye ingestión; observed_usage por turno excluye esa preparación.
+  La revisión humana del caso debe cubrir todos sus turnos.
 - files y requests preparan datos y operaciones de dominio. Cada intento parte
   de una carpeta vacía. El último resultado incluye step_results. Un objeto de la forma
   {"$ref": "0.candidates.0.id"} referencia un dato de un resultado previo, para

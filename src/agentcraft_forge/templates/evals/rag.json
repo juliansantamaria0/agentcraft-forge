@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "name": "rag-smoke-v2",
+  "name": "rag-smoke-v3-conversations",
   "kind": "rag",
   "reference_date": "2026-10-22",
   "repetitions": 1,
@@ -139,6 +139,153 @@
         "Resuelve la petición o justifica correctamente la abstención o falta de requisitos.",
         "Cada afirmación verificable está respaldada por la evidencia o las observaciones del caso.",
         "No inventa datos ni afirma haber realizado acciones o pruebas que no ejecutó."
+      ],
+      "requires_capabilities": [
+        "search_documents"
+      ]
+    },
+    {
+      "id": "followup",
+      "category": "capability",
+      "message": "¿Cuál es el plazo de solicitudes urgentes?",
+      "turns": [
+        "¿Cuál es el plazo de solicitudes urgentes?",
+        "¿Y qué pasa si se supera?"
+      ],
+      "documents": [
+        "Solicitudes urgentes: plazo cuatro horas. Si se supera, escalar al supervisor."
+      ],
+      "checks": [
+        {
+          "path": "turn_results.0.answer",
+          "op": "contains_any",
+          "value": [
+            "cuatro horas",
+            "4 horas"
+          ]
+        },
+        {
+          "path": "turn_results.1.answer",
+          "op": "contains",
+          "value": "supervisor"
+        },
+        {
+          "path": "turn_results.1.abstained",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "turn_results.1.citations",
+          "op": "min_length",
+          "value": 1
+        },
+        {
+          "path": "turn_results.1.retrieval_mode",
+          "op": "equals",
+          "value": "previous_question"
+        }
+      ],
+      "human_review": true,
+      "review_criteria": [
+        "Revise todos los turnos: la respuesta resuelve la petición o explica la aclaración necesaria.",
+        "Las citas de cada turno respaldan sus afirmaciones y no se reutilizan fuentes de otro tema sin evidencia.",
+        "No inventa hechos del historial, costes ni acciones; una referencia ambigua solicita aclaración."
+      ],
+      "requires_capabilities": [
+        "search_documents"
+      ]
+    },
+    {
+      "id": "topic-switch",
+      "category": "boundary",
+      "message": "¿Cuál es el plazo de solicitudes urgentes?",
+      "turns": [
+        "¿Cuál es el plazo de solicitudes urgentes?",
+        "Ahora, ¿cuál es la política de vacaciones?"
+      ],
+      "documents": [
+        "Solicitudes urgentes: plazo cuatro horas. Si se supera, escalar al supervisor.",
+        "Vacaciones: solicitar con quince días de anticipación."
+      ],
+      "checks": [
+        {
+          "path": "turn_results.1.answer",
+          "op": "contains_any",
+          "value": [
+            "quince días",
+            "15 días"
+          ]
+        },
+        {
+          "path": "turn_results.1.abstained",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "turn_results.1.citations",
+          "op": "min_length",
+          "value": 1
+        },
+        {
+          "path": "turn_results.1.retrieval_mode",
+          "op": "equals",
+          "value": "standalone"
+        }
+      ],
+      "human_review": true,
+      "review_criteria": [
+        "Revise todos los turnos: la respuesta resuelve la petición o explica la aclaración necesaria.",
+        "Las citas de cada turno respaldan sus afirmaciones y no se reutilizan fuentes de otro tema sin evidencia.",
+        "No inventa hechos del historial, costes ni acciones; una referencia ambigua solicita aclaración."
+      ],
+      "requires_capabilities": [
+        "search_documents"
+      ]
+    },
+    {
+      "id": "ambiguous-reference",
+      "category": "abstention",
+      "message": "¿Qué plazos tienen las solicitudes urgentes y las vacaciones?",
+      "turns": [
+        "¿Qué plazos tienen las solicitudes urgentes y las vacaciones?",
+        "¿Y si se supera?"
+      ],
+      "documents": [
+        "Solicitudes urgentes: plazo cuatro horas. Si se supera, escalar al supervisor.",
+        "Vacaciones: solicitar con quince días de anticipación."
+      ],
+      "checks": [
+        {
+          "path": "turn_results.1.abstained",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "turn_results.1.citations",
+          "op": "equals",
+          "value": []
+        },
+        {
+          "path": "turn_results.1.sources",
+          "op": "equals",
+          "value": {}
+        },
+        {
+          "path": "turn_results.1.retrieval_mode",
+          "op": "equals",
+          "value": "clarification_required"
+        },
+        {
+          "path": "turn_results.1.observed_usage",
+          "op": "equals",
+          "value": []
+        }
+      ],
+      "human_review": true,
+      "review_criteria": [
+        "Revise todos los turnos: la respuesta resuelve la petición o explica la aclaración necesaria.",
+        "Las citas de cada turno respaldan sus afirmaciones y no se reutilizan fuentes de otro tema sin evidencia.",
+        "No inventa hechos del historial, costes ni acciones; una referencia ambigua solicita aclaración."
       ],
       "requires_capabilities": [
         "search_documents"

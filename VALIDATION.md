@@ -1,4 +1,49 @@
-# Evidencia de validación — 0.3.1
+# Evidencia de validación
+
+## 0.3.3 — preparación local sobre 5e1074d
+
+27 de octubre de 2026. Windows, Python 3.12.14. Cambios posteriores a la versión
+0.3.2; la CI de esa versión no se atribuye automáticamente a esta preparación.
+
+- 338 pruebas aprobadas; 90 % de cobertura del paquete instrumentado. Los runtimes
+  generados se prueban por comportamiento, fuera de ese porcentaje de instrumentación.
+- Regresiones con Qdrant real y proveedor local para seguimientos, referencias vagas,
+  cambios de tema, historial desactivado o truncado y sesión interactiva de dos turnos.
+- Los casos de conversación usan una colección por intento y verifican cada turno;
+  el intérprete rechaza esa suite para runtimes anteriores a 0.3.3.
+- Siete casos RAG preparados: respuesta fundamentada, ausencia de evidencia,
+  contradicción, inyección, seguimiento, cambio de tema y referencia ambigua.
+- La prueba de constructores de proveedor ignora proxies solo durante esa prueba;
+  el bloqueo de red de pytest se mantiene y no se cambia la red de los agentes.
+- La ejecución con modelos reales continúa aplazada por decisión expresa del usuario.
+  No hay resultados de calidad, coste o fidelidad semántica con proveedores de pago.
+
+Los resultados locales corresponden a estos cambios. Consulte la ejecución de CI
+del commit que instale para comprobar Windows, Ubuntu, Docker y la instalación del
+wheel; no se crean tags, GitHub Releases ni una publicación PyPI.
+
+## 0.3.2 — commit 5e1074d
+
+27 de octubre de 2026. Preparación local en Windows con Python 3.12.14.
+Commit completo: `5e1074d68db05333ed377102b8d436dbc443fd6e`.
+
+- 327 pruebas aprobadas; 89,96 % de cobertura del paquete instrumentado, redondeada
+  a 90 %. El porcentaje no incluye todos los runtimes generados como fuente instrumentada.
+- Ruff y Black correctos; 36 archivos Python comprobados con Black.
+- Wheel y distribución fuente construidos y aprobados por Twine; wheel instalado
+  en un entorno independiente y comprobado fuera del checkout con las cinco plantillas.
+- Prueba completa del evaluador RAG con Qdrant real y proveedor local; regresiones
+  de importes ambiguos, identidad de embeddings, selección e integridad de informes.
+- Comparación local reproducible: cuatro operaciones de embeddings frente a una,
+  conservando dos fuentes sintéticas. No mide ahorro real en tokens o dólares.
+- CI del commit aprobada en Windows, Ubuntu y Docker. La demostración de gastos
+  con sus 19 pasos y la prueba del wheel se ejecutaron en los jobs Windows/Ubuntu.
+
+[Ejecución de CI verificada](https://github.com/juliansantamaria0/agentcraft-forge/actions/runs/40523598867).
+Las llamadas a modelos reales y su evaluación semántica siguen pendientes. No se
+crearon tags, GitHub Releases ni publicación PyPI para esta versión.
+
+## Evidencia histórica — 0.3.1
 
 Fecha: 22 de octubre de 2026. Windows, Python 3.12.14.
 
@@ -171,7 +216,7 @@ uv run --locked ruff check .
 uv run --locked black --check .
 uv build --no-sources
 uv run --locked twine check dist/*
-pipx install --python 3.12 dist/agentcraft_forge-0.2.4-py3-none-any.whl
+pipx install --python 3.12 dist/agentcraft_forge-0.3.3-py3-none-any.whl
 agentcraft --version
 agentcraft doctor
 ```
@@ -182,9 +227,10 @@ no seleccione una carpeta que contenga trabajo que quiera conservar.
 
 ## Validaciones pendientes de una publicación real
 
-No se han llamado modelos reales ni ejecutado embeddings contra el proveedor. La
-imagen Docker no se construyó. CI ejecuta la matriz Linux/Windows, incluidas las
-pruebas del wheel fuera del checkout; consulte Actions para el resultado del commit.
+No se han llamado modelos reales ni ejecutado embeddings contra el proveedor.
+Docker se comprobó en la CI de 0.3.2. La CI ejecuta además la matriz Windows/Ubuntu,
+incluidas las pruebas del wheel fuera del checkout; cada resultado corresponde
+solo al commit indicado, no a modificaciones locales posteriores.
 No se crearon tags, GitHub Releases ni una publicación PyPI de AgentCraft Forge.
 
 La primera distribución en PyPI necesita disponibilidad del nombre, Trusted Publisher

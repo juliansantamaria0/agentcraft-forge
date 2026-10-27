@@ -59,6 +59,10 @@ Cada pregunta se vectoriza una vez. La colección registra identidad del modelo 
 embeddings y dimensiones; un cambio incompatible exige reingestión en otra colección.
 Una colección antigua sin este contrato también requiere reingestión. Si la evidencia
 no cabe en MAX_EVIDENCE_CHARS, el agente se abstiene; no corta fragmentos a mitad.
+Los seguimientos simples pueden utilizar la pregunta anterior completa, sin otra
+llamada de reformulación. Referencias vagas, varios temas o cadenas de seguimientos
+piden aclaración. Reformule con el tema explícito o indique «Ahora, ...» al cambiarlo.
+Los casos de conversación están en evals/smoke.json y se revisan turno por turno.
 [% endif %]
 
 ## Desarrollo

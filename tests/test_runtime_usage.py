@@ -116,7 +116,9 @@ def test_embedding_usage_counts_actual_provider_tokens(runtime_project):
     assert "private" not in json.dumps(report)
 
 
-def test_provider_limits_and_dimensions_are_configured_without_network(runtime_project):
+def test_provider_limits_and_dimensions_are_configured_without_network(
+    runtime_project, monkeypatch
+):
     from pydantic import SecretStr
 
     _, load = runtime_project("rag")
@@ -124,6 +126,11 @@ def test_provider_limits_and_dimensions_are_configured_without_network(runtime_p
         api_key=SecretStr("synthetic-unused"), embedding_dimensions=256
     )
     providers = load("providers")
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:9")
+    # Solo esta comprobación de constructores ignora los proxies del anfitrión.
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
     assert providers.chat_model(settings).max_retries == 0
     assert providers.chat_model(settings).max_tokens == 1200
     assert providers.embeddings_model(settings).dimensions == 256

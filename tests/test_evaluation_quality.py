@@ -432,3 +432,35 @@ def test_report_reader_accepts_large_reports_but_keeps_input_limit(tmp_path):
         read_json_document(path)
     data, original = read_json_document(path, max_bytes=REPORT_JSON_BYTES)
     assert len(data["padding"]) == 1_100_000 and len(original) > 1_000_000
+
+
+def test_conversation_fixtures_are_bounded_and_rag_only(tmp_path):
+    base = {
+        "id": "turns",
+        "category": "boundary",
+        "message": "Primera pregunta",
+        "checks": [{"path": "abstained", "op": "equals", "value": True}],
+    }
+    with pytest.raises(ValueError, match="primer turno"):
+        Case(**base, turns=["Otra pregunta"])
+    with pytest.raises(ValueError):
+        Case(**base, turns=[base["message"]] * 7)
+    with pytest.raises(ValueError, match="solo para RAG"):
+        Suite(
+            name="invalid",
+            kind=Kind.tools,
+            cases=[Case(**base, turns=[base["message"]])],
+        )
+    spec = design("old-rag", "Consultar documentación interna", Kind.rag).model_copy(
+        update={"generator_version": "0.3.2"}
+    )
+    root = generate(spec, tmp_path)
+    suite = load_suite(root / "evals/smoke.json")
+    with pytest.raises(ValueError, match="0.3.3"):
+        evaluate(
+            root,
+            suite,
+            executor=lambda *args: pytest.fail(
+                "No debe ejecutar un runtime incompatible"
+            ),
+        )

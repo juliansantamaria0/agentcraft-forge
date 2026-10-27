@@ -59,6 +59,18 @@ la respuesta; compruebe preguntas de seguimiento, abstenciones y citas antes de
 adoptar una configuración menor. Cada proceso interactivo conserva su propio
 historial; una llamada aislada con `--message` no tiene historial previo.
 
+Desde 0.3.3, los seguimientos simples reconocidos (por ejemplo «¿Y qué pasa si se
+supera?») combinan la pregunta anterior completa con el mensaje actual para una
+sola búsqueda. No utilizan la respuesta del asistente como evidencia ni hacen una
+llamada adicional para reformular. Una pregunta independiente utiliza únicamente
+su propio texto; un cambio de tema puede expresarse como «Ahora, ¿cuál es ...?».
+Una referencia vaga («¿Y eso?»), una pregunta anterior con varios temas, un ancla
+truncada o una cadena de seguimientos pide aclaración sin invocar embeddings o chat.
+HISTORY_TURNS=0 desactiva también esa referencia al turno anterior. Es una regla
+conservadora para patrones concretos, no resolución general de referencias; reformule
+con el tema explícito cuando solicite aclaración. La calidad con modelos reales
+debe evaluarse también con paráfrasis y conversaciones propias del despliegue.
+
 RAG vectoriza una vez la pregunta y usa ese vector en MMR con umbral de relevancia.
 La apertura verifica modelo, clase del proveedor, dimensiones, configuración e
 ingestión mediante metadatos, sin vectorizar un texto de prueba en cada consulta.
